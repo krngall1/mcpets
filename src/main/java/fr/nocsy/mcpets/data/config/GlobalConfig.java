@@ -50,6 +50,8 @@ public class GlobalConfig extends AbstractConfig {
     @Getter
     private int distanceTeleport;
     @Getter
+    private double wanderRange;
+    @Getter
     private int maxNameLength;
     @Getter
     private int maxActivePets;
@@ -165,6 +167,8 @@ public class GlobalConfig extends AbstractConfig {
             getConfig().set("Mountable", true);
         if (getConfig().get("DistanceTeleport") == null)
             getConfig().set("DistanceTeleport", 30);
+        if (getConfig().get("WanderRange") == null)
+            getConfig().set("WanderRange", 16);
         if (getConfig().get("MaxNameLength") == null)
             getConfig().set("MaxNameLength", 16);
         if (getConfig().get("InventorySize") == null)
@@ -260,6 +264,7 @@ public class GlobalConfig extends AbstractConfig {
         dismountOnDamaged = getConfig().getBoolean("DismountOnDamaged");
         spawnPetOnReconnect = getConfig().getBoolean("SpawnPetOnReconnect");
         distanceTeleport = getConfig().getInt("DistanceTeleport");
+        wanderRange = getConfig().getDouble("WanderRange");
         maxNameLength = getConfig().getInt("MaxNameLength");
         enableClickBackToMenu = getConfig().getBoolean("EnableClickBackToMenu");
         activateBackMenuIcon = getConfig().getBoolean("ActivateBackMenuIcon");

@@ -8,12 +8,14 @@ import lombok.Setter;
 
 import net.kyori.adventure.text.Component;
 
+import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.jetbrains.annotations.NotNull;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.Location;
+import org.bukkit.World;
 import org.bukkit.NamespacedKey;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
@@ -233,7 +235,11 @@ public class Pet {
     // If pet is in wander mode, how far from the center can it wander
     @Setter
     @Getter
-    private double wanderRange = 10.0;
+    private double wanderRange = GlobalConfig.getInstance().getWanderRange();
+
+    // Where the wander home is stored on the entity, so it survives restarts and relinks
+    private static final NamespacedKey WANDER_CENTER_KEY = new NamespacedKey("mcpets", "wander_center");
+    private static final NamespacedKey WANDER_RANGE_KEY = new NamespacedKey("mcpets", "wander_range");
 
     /**
      * Constructor only used to create a fundamental Pet. If you wish to use a pet instance, please refer to copy()
@@ -721,6 +727,11 @@ public class Pet {
                     }
                     NamespacedKey key = new NamespacedKey("mcpets", "pet_id");
                     ent.getPersistentDataContainer().set(key, PersistentDataType.STRING, id);
+                    // A wandering pet respawned by MCPets (e.g. teleported home) keeps its mode tag and home
+                    if (aiMode == PetAIMode.WANDER && wanderCenter != null) {
+                        ent.addScoreboardTag(PetAIMode.WANDER.getMode());
+                        writeWanderHome(ent);
+                    }
                 } catch (final NullPointerException | NoSuchElementException ex) {
                     // if there's been a problem, trigger a despawn
                     Debugger.send("§cMythicMob " + mythicMobName + " was not found.");
@@ -1075,23 +1086,33 @@ public class Pet {
                 }
 
                 else if (aiMode.equals(PetAIMode.WANDER)) {
-                    double distance = Utils.distance(wanderCenter, petLoc);
+                    // No usable home (never set, or its world is gone), so the pet's current spot becomes its home
+                    if (wanderCenter == null || !wanderCenter.isWorldLoaded()) {
+                        setWanderHome(petLoc, wanderRange);
+                    }
 
-                    // Following AI System
-                    if (distance < wanderRange) {
-                        // If the pet is close enough to the wander center then it stops
-                        PathFindingUtils.stop(activeMob.getEntity(), owner);
-                    } else if (distance > wanderRange &&
-                            (distance < GlobalConfig.getInstance().getDistanceTeleport() || tamingProgress < 1)) {
-                        // If the pet is too far but not far enough to be teleported, then it walks back towards the wander center location
-                        final AbstractLocation aloc = new AbstractLocation(activeMob.getEntity().getWorld(), wanderCenter.getX(), wanderCenter.getY(), wanderCenter.getZ());
-                        PathFindingUtils.moveTo(activeMob.getEntity(), aloc);
-                    } else if (distance > GlobalConfig.getInstance().getDistanceTeleport() && teleportTick == 0) {
-                        // If the pet is really too far,
-                        // and we didn't teleport the pet a few ticks before,
-                        // Then we teleport the pet to the center
-                        getInstance().teleport(wanderCenter);
-                        teleportTick = 4;
+                    if (!wanderCenter.getWorld().equals(petLoc.getWorld())) {
+                        // The pet ended up in another world than its home, so it's sent back home
+                        if (teleportTick == 0) {
+                            getInstance().teleport(wanderCenter);
+                            teleportTick = 4;
+                        }
+                    } else {
+                        double distance = Utils.distance(wanderCenter, petLoc);
+
+                        // Inside the range the pet is left alone, so its own MythicMobs AI (e.g. randomstroll) can roam
+                        if (distance > wanderRange &&
+                                (distance < GlobalConfig.getInstance().getDistanceTeleport() || tamingProgress < 1)) {
+                            // If the pet is too far but not far enough to be teleported, then it walks back towards the wander center location
+                            final AbstractLocation aloc = new AbstractLocation(activeMob.getEntity().getWorld(), wanderCenter.getX(), wanderCenter.getY(), wanderCenter.getZ());
+                            PathFindingUtils.moveTo(activeMob.getEntity(), aloc);
+                        } else if (distance > GlobalConfig.getInstance().getDistanceTeleport() && teleportTick == 0) {
+                            // If the pet is really too far,
+                            // and we didn't teleport the pet a few ticks before,
+                            // Then we teleport the pet to the center
+                            getInstance().teleport(wanderCenter);
+                            teleportTick = 4;
+                        }
                     }
                     if (teleportTick > 0)
                         teleportTick--;
@@ -1099,6 +1120,63 @@ public class Pet {
 
             }
         }, 0L, 10L);
+    }
+
+    /**
+     * Link an entity that is already in the world back to this pet, in the given mode
+     * Used for sitting and wandering pets that stayed in the world while MCPets forgot about them (e.g. after a restart)
+     */
+    public boolean relink(final ActiveMob mob, final UUID owner, final PetAIMode aiMode) {
+        this.owner = owner;
+        setPetStats();
+        final boolean replaced = changeActiveMobTo(mob, owner, aiMode, PetDespawnReason.REPLACED);
+
+        // Bring back the wander home stored on the entity, else the pet's current spot becomes its home
+        final Entity ent = mob.getEntity().getBukkitEntity();
+        if (aiMode == PetAIMode.WANDER && !loadWanderHome(ent))
+            setWanderHome(ent.getLocation(), GlobalConfig.getInstance().getWanderRange());
+        return replaced;
+    }
+
+    /**
+     * Set where the pet wanders around and how far it can go,
+     * and store it on the entity so it survives restarts and relinks
+     */
+    public void setWanderHome(final Location center, final double range) {
+        this.wanderCenter = center == null ? null : center.clone();
+        this.wanderRange = range;
+        if (isStillHere())
+            writeWanderHome(activeMob.getEntity().getBukkitEntity());
+    }
+
+    /**
+     * Read the wander home stored on the entity, if any
+     * Returns true if a home was found
+     */
+    public boolean loadWanderHome(final Entity ent) {
+        final PersistentDataContainer pdc = ent.getPersistentDataContainer();
+        final String raw = pdc.get(WANDER_CENTER_KEY, PersistentDataType.STRING);
+        if (raw == null) return false;
+
+        final String[] parts = raw.split(";");
+        if (parts.length != 4) return false;
+        final World world = Bukkit.getWorld(parts[0]);
+        if (world == null) return false;
+        try {
+            this.wanderCenter = new Location(world, Double.parseDouble(parts[1]), Double.parseDouble(parts[2]), Double.parseDouble(parts[3]));
+        } catch (final NumberFormatException ex) {
+            return false;
+        }
+        this.wanderRange = pdc.getOrDefault(WANDER_RANGE_KEY, PersistentDataType.DOUBLE, GlobalConfig.getInstance().getWanderRange());
+        return true;
+    }
+
+    private void writeWanderHome(final Entity ent) {
+        if (wanderCenter == null || !wanderCenter.isWorldLoaded()) return;
+        final PersistentDataContainer pdc = ent.getPersistentDataContainer();
+        pdc.set(WANDER_CENTER_KEY, PersistentDataType.STRING, wanderCenter.getWorld().getName() + ";"
+                + wanderCenter.getX() + ";" + wanderCenter.getY() + ";" + wanderCenter.getZ());
+        pdc.set(WANDER_RANGE_KEY, PersistentDataType.DOUBLE, wanderRange);
     }
 
     /**

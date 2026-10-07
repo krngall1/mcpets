@@ -3,7 +3,6 @@ package fr.nocsy.mcpets.mythicmobs.mechanics;
 import fr.nocsy.mcpets.MCPets;
 import fr.nocsy.mcpets.data.Pet;
 import fr.nocsy.mcpets.data.PetAIMode;
-import fr.nocsy.mcpets.data.PetDespawnReason;
 import fr.nocsy.mcpets.data.config.Language;
 import io.lumine.mythic.api.adapters.AbstractEntity;
 import io.lumine.mythic.api.config.MythicLineConfig;
@@ -79,14 +78,32 @@ public class PetReloadMechanic extends SkillMechanic implements ITargetedEntityS
         if (tags.contains("sit")) aiMode = PetAIMode.SIT;
         else if (tags.contains("wander")) aiMode = PetAIMode.WANDER;
 
-        List<Pet> ownerPets =  Pet.getActivePetsForOwner(UUID.fromString(ownerUUID));
-        for (Pet ownerPet : ownerPets) {
-            if (ownerPet.getId().equals(entityPetID)) {
-                Optional<ActiveMob> activeMob = MCPets.getMythicMobs().getMobManager().getActiveMob(entity.getUniqueId());
-                if (activeMob.isEmpty()) return SkillResult.CONDITION_FAILED;;
-                ownerPet.changeActiveMobTo(activeMob.get(), UUID.fromString(ownerUUID), aiMode, PetDespawnReason.REPLACED);
-            }
+        Optional<ActiveMob> activeMob = MCPets.getMythicMobs().getMobManager().getActiveMob(entity.getUniqueId());
+        if (activeMob.isEmpty()) return SkillResult.CONDITION_FAILED;
+
+        // The pet MCPets still has in memory (e.g. after a MythicMobs reload)
+        final UUID ownerId = UUID.fromString(ownerUUID);
+        Pet ownerPet = Pet.getActivePetsForOwner(ownerId).stream()
+                .filter(activePet -> activePet.getId().equals(entityPetID))
+                .findFirst()
+                .orElse(null);
+
+        // After a full restart MCPets has forgotten sitting and wandering pets that stayed in the world,
+        // so they're rebuilt from their pet id. Following pets are respawned on join instead.
+        if (ownerPet == null) {
+            if (aiMode == PetAIMode.FOLLOW) return SkillResult.CONDITION_FAILED;
+            ownerPet = Pet.getFromId(entityPetID);
+            if (ownerPet == null) return SkillResult.CONDITION_FAILED;
         }
+
+        final Pet relinkedPet = ownerPet;
+        relinkedPet.relink(activeMob.get(), ownerId, aiMode);
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                relinkedPet.setNameTag(relinkedPet.getCurrentName(), true);
+            }
+        }.runTaskLater(MCPets.getInstance(), 10L);
 
         return SkillResult.SUCCESS;
     }

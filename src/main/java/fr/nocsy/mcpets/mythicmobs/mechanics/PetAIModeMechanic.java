@@ -1,6 +1,7 @@
 package fr.nocsy.mcpets.mythicmobs.mechanics;
 
 import fr.nocsy.mcpets.data.PetAIMode;
+import fr.nocsy.mcpets.data.config.GlobalConfig;
 import org.bukkit.entity.Entity;
 
 import fr.nocsy.mcpets.data.Pet;
@@ -21,13 +22,16 @@ import io.lumine.mythic.bukkit.events.MythicMechanicLoadEvent;
 public class PetAIModeMechanic extends SkillMechanic implements ITargetedEntitySkill {
 
     private final PetAIMode mode;
+    // Wander radius, falls back on the global WanderRange when not given
+    private final double range;
 
     public PetAIModeMechanic(MythicMechanicLoadEvent event) {
         super(event.getContainer().getManager(), event.getContainer().getFile());
 
         MythicLineConfig config = event.getConfig();
 
-        mode = PetAIMode.valueOf(config.getString(new String[]{"mode"}, "follow"));
+        mode = PetAIMode.valueOf(config.getString(new String[]{"mode"}, "follow").toUpperCase());
+        range = config.getDouble(new String[]{"range", "r"}, -1);
     }
 
     @Override
@@ -42,8 +46,7 @@ public class PetAIModeMechanic extends SkillMechanic implements ITargetedEntityS
         pet.setAiMode(mode);
 
         if (mode == PetAIMode.WANDER) {
-            pet.setWanderCenter(entity.getLocation());
-            pet.setWanderRange(16);
+            pet.setWanderHome(entity.getLocation(), range > 0 ? range : GlobalConfig.getInstance().getWanderRange());
         }
 
         return SkillResult.SUCCESS;

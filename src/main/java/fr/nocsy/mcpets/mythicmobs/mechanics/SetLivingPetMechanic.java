@@ -61,8 +61,7 @@ public class SetLivingPetMechanic extends SkillMechanic implements ITargetedEnti
                     if (followOnTame) pet.setAiMode(PetAIMode.FOLLOW);
                     else {
                         pet.setAiMode(PetAIMode.WANDER);
-                        pet.setWanderCenter(entity.getBukkitEntity().getLocation());
-                        pet.setWanderRange(8);
+                        pet.setWanderHome(entity.getBukkitEntity().getLocation(), 8);
                     }
                 }
         );
