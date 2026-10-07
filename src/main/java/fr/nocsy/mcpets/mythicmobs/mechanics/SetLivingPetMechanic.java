@@ -2,6 +2,7 @@ package fr.nocsy.mcpets.mythicmobs.mechanics;
 
 import java.util.Optional;
 
+import fr.nocsy.mcpets.data.PetAIMode;
 import org.bukkit.Bukkit;
 
 import fr.nocsy.mcpets.MCPets;
@@ -57,7 +58,12 @@ public class SetLivingPetMechanic extends SkillMechanic implements ITargetedEnti
                     activeMob.ifPresent(pet::setActiveMob);
 
                     pet.setDefaultTamingValue(tamingProgress);
-                    pet.setFollowOwner(followOnTame);
+                    if (followOnTame) pet.setAiMode(PetAIMode.FOLLOW);
+                    else {
+                        pet.setAiMode(PetAIMode.WANDER);
+                        pet.setWanderCenter(entity.getBukkitEntity().getLocation());
+                        pet.setWanderRange(8);
+                    }
                 }
         );
 

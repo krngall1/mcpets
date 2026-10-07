@@ -9,11 +9,7 @@ import lombok.Setter;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 
@@ -140,7 +136,7 @@ public class Databases {
                     }
 
                     try {
-                        pd.setLastActivePet(playerData.getString("lastActivePet"));
+                        List<String> lastActivePets = unserializeListData(playerData, "lastActivePets");
                     } catch (SQLException e) {
                         // Column might not exist yet
                     }
@@ -202,7 +198,7 @@ public class Databases {
                     }
 
                     try {
-                        pd.setLastActivePet(playerData.getString("lastActivePet"));
+                        pd.setLastActivePets(unserializeListData(playerData, "lastActivePets"));
                     } catch (SQLException e) {
                         // Column might not exist yet
                     }
@@ -229,8 +225,7 @@ public class Databases {
 
                 String names = buildStringSerialized(pd.getMapOfRegisteredNames());
                 String inventories = buildStringSerialized(pd.getMapOfRegisteredInventories());
-                String lastActivePet = pd.getLastActivePet();
-                if (lastActivePet == null) lastActivePet = "";
+                String activePets = buildListSerialized(pd.getLastActivePets());
 
                 StringBuilder data = new StringBuilder();
 
@@ -240,8 +235,8 @@ public class Databases {
                 if (data.length() > 0)
                     data = new StringBuilder(data.substring(0, data.length() - 3));
 
-                getMySQL().preparedQuery("INSERT INTO " + table + " (uuid, names, inventories, data, lastActivePet) VALUES (?, ?, ?, ?, ?)",
-                        uuid.toString(), names, inventories, data.toString(), lastActivePet);
+                getMySQL().preparedQuery("INSERT INTO " + table + " (uuid, names, inventories, data, lastActivePets) VALUES (?, ?, ?, ?, ?)",
+                        uuid.toString(), names, inventories, data.toString(), activePets);
             }
         }
     }
@@ -257,8 +252,7 @@ public class Databases {
 
             String names = buildStringSerialized(pd.getMapOfRegisteredNames());
             String inventories = buildStringSerialized(pd.getMapOfRegisteredInventories());
-            String lastActivePet = pd.getLastActivePet();
-            if (lastActivePet == null) lastActivePet = "";
+            String activePets = buildListSerialized(pd.getLastActivePets());
 
             StringBuilder data = new StringBuilder();
 
@@ -272,8 +266,8 @@ public class Databases {
             getMySQL().preparedQuery("DELETE FROM " + table + " WHERE uuid=?", playerUUID.toString());
 
             // Then, insert the new data for the player
-            getMySQL().preparedQuery("INSERT INTO " + table + " (uuid, names, inventories, data, lastActivePet) VALUES (?, ?, ?, ?, ?)",
-                    playerUUID.toString(), names, inventories, data.toString(), lastActivePet);
+            getMySQL().preparedQuery("INSERT INTO " + table + " (uuid, names, inventories, data, lastActivePets) VALUES (?, ?, ?, ?, ?)",
+                    playerUUID.toString(), names, inventories, data.toString(), activePets);
         }
     }
 
@@ -388,5 +382,21 @@ public class Databases {
         }
 
         return outputMap;
+    }
+
+    private static String buildListSerialized(List<String> list) {
+        String builder = "";
+        for (String entry : list) {
+            if (builder.isBlank())
+                builder = entry;
+            else
+                builder = builder + ";;" + entry;
+        }
+        return builder;
+    }
+
+    public static List<String> unserializeListData(ResultSet resultSet, String targetedColumn) throws SQLException {
+        String targetedResults = resultSet.getString(targetedColumn);
+        return Arrays.stream(targetedResults.split(";;")).toList();
     }
 }

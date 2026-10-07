@@ -8,6 +8,7 @@ import lombok.Setter;
 
 import net.kyori.adventure.text.Component;
 
+import org.bukkit.persistence.PersistentDataType;
 import org.jetbrains.annotations.NotNull;
 
 import org.bukkit.Bukkit;
@@ -214,7 +215,7 @@ public class Pet {
     @Getter
     @Setter
     // Should it follow the owner ?
-    private boolean followOwner;
+    private PetAIMode aiMode;
 
     // Debug variables
     @Setter
@@ -223,6 +224,16 @@ public class Pet {
     // AI variable
     private int task = 0;
     private boolean taskRunning = false;
+
+    // If pet is in wander mode, where is the center of the wander range
+    @Setter
+    @Getter
+    private Location wanderCenter = null;
+
+    // If pet is in wander mode, how far from the center can it wander
+    @Setter
+    @Getter
+    private double wanderRange = 10.0;
 
     /**
      * Constructor only used to create a fundamental Pet. If you wish to use a pet instance, please refer to copy()
@@ -474,7 +485,7 @@ public class Pet {
             allPets.addAll(petList);
         }
         for (final Pet pet : allPets) {
-            pet.despawn(PetDespawnReason.RELOAD);
+            if (pet.getAiMode() == PetAIMode.FOLLOW) pet.despawn(PetDespawnReason.RELOAD);
         }
     }
 
@@ -508,7 +519,7 @@ public class Pet {
                 // Give the access
                 Utils.givePermission(owner, permission);
                 // Activate the pet in MCPets, coz so far it was just following the owner
-                changeActiveMobTo(activeMob, owner, true, PetDespawnReason.REPLACED);
+                changeActiveMobTo(activeMob, owner, PetAIMode.FOLLOW, PetDespawnReason.REPLACED);
 
                 // Set the health at the top after taming
                 new BukkitRunnable() {
@@ -575,12 +586,12 @@ public class Pet {
             setPetStats();
         }
 
+        //Set the pet to follow the owner by default
+        if (aiMode == null) aiMode = PetAIMode.FOLLOW;
+
         // Trigger the PetSpawnEvent
         final PetSpawnEvent event = new PetSpawnEvent(this, loc);
         Utils.callEvent(event);
-
-        // Set the pet to follow the owner by default
-        followOwner = true;
 
         // If no location is given
         if (loc == null)
@@ -626,8 +637,6 @@ public class Pet {
             return NOT_ALLOWED;
         }
 
-        // Check if this exact pet ID is already active for this player
-        // (excluding this instance if it's somehow already in the list)
         // Check if this exact pet ID is already active for this player
         // (excluding this instance if it's somehow already in the list)
         String spawnKey = null;
@@ -710,6 +719,8 @@ public class Pet {
                         }
                         ent = MCPets.getMythicMobs().getAPIHelper().spawnMythicMob(mythicMobName, spawnLoc);
                     }
+                    NamespacedKey key = new NamespacedKey("mcpets", "pet_id");
+                    ent.getPersistentDataContainer().set(key, PersistentDataType.STRING, id);
                 } catch (final NullPointerException | NoSuchElementException ex) {
                     // if there's been a problem, trigger a despawn
                     Debugger.send("§cMythicMob " + mythicMobName + " was not found.");
@@ -755,7 +766,7 @@ public class Pet {
                     return MYTHIC_MOB_NULL;
                 }
 
-                final boolean returnDespawned = changeActiveMobTo(activeMob, owner, true, PetDespawnReason.REPLACED);
+                final boolean returnDespawned = changeActiveMobTo(activeMob, owner, aiMode, PetDespawnReason.REPLACED);
 
                 // Handles the first spawn situation
                 if (firstSpawn) {
@@ -835,7 +846,7 @@ public class Pet {
      * Set the pet's instance active mob to the given new ActiveMob
      * Returns the value if the mob has revoked a previous one
      */
-    public boolean changeActiveMobTo(final ActiveMob mob, final UUID owner, final boolean followOwner, final PetDespawnReason reason) {
+    public boolean changeActiveMobTo(final ActiveMob mob, final UUID owner, final PetAIMode aiMode, final PetDespawnReason reason) {
         boolean replaced = false;
         // No longer auto-despawn previous pets - allow multiple pets
         // The max limit check in spawn() will handle this
@@ -858,7 +869,7 @@ public class Pet {
         }.runTaskLater(MCPets.getInstance(), 1L);
 
         // Follow up the owner ?
-        this.followOwner = followOwner;
+        this.aiMode = aiMode;
         this.AI();
 
         // Add the pet to the active list of pets for the given owner
@@ -868,7 +879,7 @@ public class Pet {
         if (GlobalConfig.getInstance().isSpawnPetAfterServerRestart()) {
             final PlayerData pd = PlayerData.get(owner);
             final PetSkin activeSkin = getActiveSkin();
-            pd.setLastActivePet(PlayerData.encodeActivePet(this.getId(),
+            pd.addLastActivePet(PlayerData.encodeActivePet(this.getId(), this.aiMode,
                     activeSkin != null ? activeSkin.getPathId() : null));
             pd.save();
         }
@@ -997,13 +1008,13 @@ public class Pet {
             public void run() {
 
                 final Player p = Bukkit.getPlayer(owner);
-                if (p == null) {
+                if (p == null && aiMode == PetAIMode.FOLLOW) {
                     getInstance().despawn(PetDespawnReason.OWNER_NOT_HERE);
                     stopAI();
                     return;
                 }
 
-                if (p.isDead())
+                if (p != null && p.isDead())
                     return;
 
                 if (!getInstance().isStillHere()) {
@@ -1014,54 +1025,77 @@ public class Pet {
                 }
 
                 final String permission = getInstance().getPermission();
-                if (getInstance().isCheckPermission() && (permission == null || !p.hasPermission(permission))) {
+                if (p != null && getInstance().isCheckPermission() && (permission == null || !p.hasPermission(permission))) {
                     Debugger.send("§6[AiManager] : §cPet " + getId() + " despawned because the owner doesn't have permission");
                     getInstance().despawn(PetDespawnReason.DONT_HAVE_PERM);
                     stopAI();
                     return;
                 }
 
-                final Location petLocation = p.getLocation();
-                final Location ownerLoc = petLocation;
                 final Location petLoc = getInstance().getActiveMob().getEntity().getBukkitEntity().getLocation();
 
-                // If the owner is not in the same world as the pet and that the pet is fully tamed, we move it
-                // to the owner
-                if (!ownerLoc.getWorld().getName().equals(petLoc.getWorld().getName()) && tamingProgress == 1) {
-                    getInstance().despawn(PetDespawnReason.TELEPORT);
-                    getInstance().spawn(p, petLocation);
-                    return;
-                }
+                if (aiMode.equals(PetAIMode.FOLLOW)) {
 
-                final double distance = Utils.distance(ownerLoc, petLoc);
+                    final Location ownerLoc = p.getLocation();
 
-                // Following AI System
-                if (distance < getInstance().getComingBackRange()) {
-                    // If the pet is too close then it stops
-                    PathFindingUtils.stop(activeMob.getEntity(), owner);
-                } else if (distance > getInstance().getDistance() &&
-                        (distance < GlobalConfig.getInstance().getDistanceTeleport() || tamingProgress < 1)) {
-                    // If the pet is too far but not far enough to be teleported, then it follows up the owner
-                    // Except if the following is disabled
-                    // * Note : if the taming is not completed then the pet can not be teleported to the owner
-                    if (!followOwner)
+                    // If the owner is not in the same world as the pet, and the pet is fully tamed, and the pet is in follow mode (has tag)
+                    // we move it to the owner
+                    if (!ownerLoc.getWorld().getName().equals(petLoc.getWorld().getName()) && tamingProgress == 1) {
+                        getInstance().despawn(PetDespawnReason.TELEPORT);
+                        getInstance().spawn(p, ownerLoc);
                         return;
-                    final AbstractLocation aloc = new AbstractLocation(activeMob.getEntity().getWorld(), petLocation.getX(), petLocation.getY(), petLocation.getZ());
-                    PathFindingUtils.moveTo(activeMob.getEntity(), aloc);
-                } else if (distance > GlobalConfig.getInstance().getDistanceTeleport()
-                        && !p.isFlying() && !p.isGliding()
-                        && p.isOnGround()
-                        && teleportTick == 0) {
-                    // If the pet is really too far, and that the owner is not flying
-                    // And that we didn't teleport the pet a few ticks before
-                    // Then we teleport the pet to the owner
-                    // * Note that if the taming of the pet is not fully complete, then the pet won't be teleported
-                    // * but instead the pet will try to come closer to the owner according to the previous "if"
-                    getInstance().teleportToPlayer(p);
-                    teleportTick = 4;
+                    }
+
+                    double distance = Utils.distance(ownerLoc, petLoc);
+
+                    // Following AI System
+                    if (distance < getInstance().getComingBackRange()) {
+                        // If the pet is too close then it stops
+                        PathFindingUtils.stop(activeMob.getEntity(), owner);
+                    } else if (distance > getInstance().getDistance() &&
+                            (distance < GlobalConfig.getInstance().getDistanceTeleport() || tamingProgress < 1)) {
+                        // If the pet is too far but not far enough to be teleported, then it follows up the owner
+                        // * Note : if the taming is not completed then the pet can not be teleported to the owner
+                        final AbstractLocation aloc = new AbstractLocation(activeMob.getEntity().getWorld(), ownerLoc.getX(), ownerLoc.getY(), ownerLoc.getZ());
+                        PathFindingUtils.moveTo(activeMob.getEntity(), aloc);
+                    } else if (distance > GlobalConfig.getInstance().getDistanceTeleport()
+                            && !p.isFlying() && !p.isGliding()
+                            && p.isOnGround()
+                            && teleportTick == 0) {
+                        // If the pet is really too far, and the owner is not flying,
+                        // and we didn't teleport the pet a few ticks before,
+                        // Then we teleport the pet to the owner
+                        // * Note that if the taming of the pet is not fully complete, then the pet won't be teleported
+                        // * but instead the pet will try to come closer to the owner according to the previous "if"
+                        getInstance().teleportToPlayer(p);
+                        teleportTick = 4;
+                    }
+                    if (teleportTick > 0)
+                        teleportTick--;
                 }
-                if (teleportTick > 0)
-                    teleportTick--;
+
+                else if (aiMode.equals(PetAIMode.WANDER)) {
+                    double distance = Utils.distance(wanderCenter, petLoc);
+
+                    // Following AI System
+                    if (distance < wanderRange) {
+                        // If the pet is close enough to the wander center then it stops
+                        PathFindingUtils.stop(activeMob.getEntity(), owner);
+                    } else if (distance > wanderRange &&
+                            (distance < GlobalConfig.getInstance().getDistanceTeleport() || tamingProgress < 1)) {
+                        // If the pet is too far but not far enough to be teleported, then it walks back towards the wander center location
+                        final AbstractLocation aloc = new AbstractLocation(activeMob.getEntity().getWorld(), wanderCenter.getX(), wanderCenter.getY(), wanderCenter.getZ());
+                        PathFindingUtils.moveTo(activeMob.getEntity(), aloc);
+                    } else if (distance > GlobalConfig.getInstance().getDistanceTeleport() && teleportTick == 0) {
+                        // If the pet is really too far,
+                        // and we didn't teleport the pet a few ticks before,
+                        // Then we teleport the pet to the center
+                        getInstance().teleport(wanderCenter);
+                        teleportTick = 4;
+                    }
+                    if (teleportTick > 0)
+                        teleportTick--;
+                }
 
             }
         }, 0L, 10L);
@@ -1138,7 +1172,7 @@ public class Pet {
                 if (reason == PetDespawnReason.REVOKE || reason == PetDespawnReason.DISMOUNT || reason == PetDespawnReason.UNKNOWN) {
                     final PlayerData pd = PlayerData.get(owner);
                     if (pd != null) {
-                        pd.setLastActivePet("");
+                        pd.setLastActivePets(new ArrayList<>());
                         pd.save();
                     }
                 }
@@ -1154,7 +1188,7 @@ public class Pet {
             if (reason == PetDespawnReason.REVOKE || reason == PetDespawnReason.DISMOUNT || reason == PetDespawnReason.UNKNOWN) {
                 final PlayerData pd = PlayerData.get(owner);
                 if (pd != null) {
-                    pd.setLastActivePet("");
+                    pd.setLastActivePets(new ArrayList<>());
                     pd.save();
                 }
             }

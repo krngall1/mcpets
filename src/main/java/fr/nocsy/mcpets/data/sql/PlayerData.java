@@ -1,11 +1,13 @@
 package fr.nocsy.mcpets.data.sql;
 
+import fr.nocsy.mcpets.data.PetAIMode;
 import fr.nocsy.mcpets.data.config.GlobalConfig;
 import fr.nocsy.mcpets.data.inventories.PetInventory;
 import lombok.Getter;
 import lombok.Setter;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -26,7 +28,7 @@ public class PlayerData {
 
     @Getter
     @Setter
-    private String lastActivePet;
+    private List<String> lastActivePets;
 
     @Setter
     @Getter
@@ -57,7 +59,7 @@ public class PlayerData {
                 PlayerDataNoDatabase pdn = PlayerDataNoDatabase.get(owner);
                 data.setMapOfRegisteredNames(pdn.mapOfRegisteredNames);
                 data.setMapOfRegisteredInventories(pdn.mapOfRegisteredInventories);
-                data.setLastActivePet(pdn.getLastActivePet());
+                data.setLastActivePets(pdn.getLastActivePets());
                 registeredData.put(owner, data);
 
                 return data;
@@ -69,15 +71,20 @@ public class PlayerData {
         }
     }
 
+    public void addLastActivePet(String pet) {
+        if (!lastActivePets.contains(pet)) lastActivePets.add(pet);
+    }
+
     public static PlayerData getEmpty(UUID owner) {
         PlayerData data = new PlayerData();
         data.setUuid(owner);
         return data;
     }
 
-    public static String encodeActivePet(String petId, String skinPathId) {
+    public static String encodeActivePet(String petId, PetAIMode petAI, String skinPathId) {
         if (petId == null)
             petId = "";
+        petId += ACTIVE_PET_SKIN_DELIMITER + petAI.toString();
         return (skinPathId == null || skinPathId.isEmpty())
                 ? petId
                 : petId + ACTIVE_PET_SKIN_DELIMITER + skinPathId;
@@ -93,8 +100,14 @@ public class PlayerData {
     public static String decodeActiveSkinId(String value) {
         if (value == null)
             return null;
-        int idx = value.indexOf(ACTIVE_PET_SKIN_DELIMITER);
-        return idx < 0 ? null : value.substring(idx + ACTIVE_PET_SKIN_DELIMITER.length());
+        int count = (value.length() - value.replace(ACTIVE_PET_SKIN_DELIMITER, "").length()) / ACTIVE_PET_SKIN_DELIMITER.length();
+        return count <= 1 ? null : value.split(ACTIVE_PET_SKIN_DELIMITER)[2];
+    }
+
+    public static String decodeActiveAI(String value) {
+        if (value == null)
+            return null;
+        return value.split(ACTIVE_PET_SKIN_DELIMITER)[1];
     }
 
     public static void saveDB() {
@@ -122,7 +135,7 @@ public class PlayerData {
         else {
             PlayerDataNoDatabase pdn = PlayerDataNoDatabase.get(uuid);
             pdn.setMapOfRegisteredNames(mapOfRegisteredNames);
-            pdn.setLastActivePet(lastActivePet);
+            pdn.setLastActivePets(lastActivePets);
 
             mapOfRegisteredInventories.clear();
             HashMap<String, PetInventory> inventories = PetInventory.getPetInventories().get(this.getUuid());

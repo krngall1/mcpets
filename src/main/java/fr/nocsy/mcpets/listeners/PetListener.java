@@ -6,6 +6,7 @@ import java.util.UUID;
 import java.util.HashMap;
 import java.util.ArrayList;
 
+import fr.nocsy.mcpets.data.*;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.entity.Entity;
@@ -21,17 +22,13 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 
 import fr.nocsy.mcpets.MCPets;
-import fr.nocsy.mcpets.data.Pet;
-import fr.nocsy.mcpets.data.Items;
 import fr.nocsy.mcpets.PPermission;
 import fr.nocsy.mcpets.utils.Utils;
-import fr.nocsy.mcpets.data.PetSkin;
 import fr.nocsy.mcpets.data.sql.Databases;
 import fr.nocsy.mcpets.data.sql.PlayerData;
 import fr.nocsy.mcpets.utils.debug.Debugger;
 import fr.nocsy.mcpets.events.PetSpawnEvent;
 import fr.nocsy.mcpets.data.config.Language;
-import fr.nocsy.mcpets.data.PetDespawnReason;
 import fr.nocsy.mcpets.data.flags.FlagsManager;
 import fr.nocsy.mcpets.data.livingpets.PetFood;
 import fr.nocsy.mcpets.data.config.GlobalConfig;
@@ -152,15 +149,16 @@ public class PetListener implements Listener {
 
         List<String> activePetIds = new ArrayList<>();
         Map<String, String> activeSkinIds = new HashMap<>();
-
+        PlayerData.get(uuid).setLastActivePets(new ArrayList<>());
+        PlayerData.get(uuid).save();
         // Create a copy to avoid ConcurrentModificationException when despawning modifies the list
         List<Pet> pets = Pet.getActivePetsForOwner(uuid);
         for (Pet pet : new ArrayList<>(pets)) {
             // Capture skin data before despawn clears it
             PetSkin activeSkin = pet.getActiveSkin();
-            pet.despawn(PetDespawnReason.DISCONNECTION);
+
             if (p.hasPermission(pet.getPermission())) {
-                String encoded = PlayerData.encodeActivePet(pet.getId(),
+                String encoded = PlayerData.encodeActivePet(pet.getId(), pet.getAiMode(),
                         activeSkin != null ? activeSkin.getPathId() : null);
                 reconnectionPets.putIfAbsent(uuid, encoded);
                 activePetIds.add(pet.getId());
@@ -170,10 +168,13 @@ public class PetListener implements Listener {
                 if (GlobalConfig.getInstance().isSpawnPetAfterServerRestart()) {
                     PlayerData pd = PlayerData.get(uuid);
                     if (pd != null) {
-                        pd.setLastActivePet(encoded);
+                        pd.addLastActivePet(encoded);
                         pd.save();
                     }
                 }
+            }
+            if (pet.getAiMode() == PetAIMode.FOLLOW) {
+                pet.despawn(PetDespawnReason.DISCONNECTION);
             }
         }
         // Velocity: persist or clear active pet record so destination server restores correctly
@@ -192,7 +193,7 @@ public class PetListener implements Listener {
         if (pets.isEmpty() && GlobalConfig.getInstance().isSpawnPetAfterServerRestart()) {
             PlayerData pd = PlayerData.get(uuid);
             if (pd != null) {
-                pd.setLastActivePet("");
+                pd.setLastActivePets(new ArrayList<>());
                 pd.save();
             }
         }
@@ -255,24 +256,30 @@ public class PetListener implements Listener {
                     reconnectionPets.remove(uuid);
                     return;
                 }
-                pet = pet.copy();
-                pet.setCheckPermission(false);
-                pet.setOwner(uuid);
-                restoreSkin(p, pet, PlayerData.decodeActiveSkinId(stored));
-                pet.spawn(p.getLocation(), true);
+                if (pet.getAiMode() == PetAIMode.FOLLOW) {
+                    pet = pet.copy();
+                    pet.setCheckPermission(false);
+                    pet.setOwner(uuid);
+                    restoreSkin(p, pet, PlayerData.decodeActiveSkinId(stored));
+                    pet.spawn(p.getLocation(), true);
+                }
                 reconnectionPets.remove(uuid);
-            } else if (GlobalConfig.getInstance().isSpawnPetAfterServerRestart()) {
+            }
+            else if (GlobalConfig.getInstance().isSpawnPetAfterServerRestart()) {
                 PlayerData pd = PlayerData.get(uuid);
-                String stored = pd.getLastActivePet();
-                String lastPetId = PlayerData.decodeActivePetId(stored);
-                if (lastPetId != null && !lastPetId.isEmpty()) {
-                    Pet pet = Pet.getFromId(lastPetId);
-                    if (pet != null) {
-                        pet = pet.copy();
-                        pet.setCheckPermission(false);
-                        pet.setOwner(uuid);
-                        restoreSkin(p, pet, PlayerData.decodeActiveSkinId(stored));
-                        pet.spawn(p.getLocation(), true);
+                List<String> storedPets = List.copyOf(pd.getLastActivePets());
+                for (String stored : new ArrayList<>(storedPets)) {
+                    String lastPetId = PlayerData.decodeActivePetId(stored);
+                    if (lastPetId != null && !lastPetId.isEmpty()) {
+                        Pet pet = Pet.getFromId(lastPetId);
+                        if (pet != null) {
+                            PetAIMode aiMode = PetAIMode.valueOf(PlayerData.decodeActiveAI(stored));
+                            pet = pet.copy();
+                            pet.setCheckPermission(false);
+                            pet.setOwner(uuid);
+                            restoreSkin(p, pet, PlayerData.decodeActiveSkinId(stored));
+                            if (aiMode == PetAIMode.FOLLOW) pet.spawn(p.getLocation(), true);
+                        }
                     }
                 }
             }
@@ -296,7 +303,7 @@ public class PetListener implements Listener {
     public void teleport(PlayerChangedWorldEvent e) {
         Player p = e.getPlayer();
         for (Pet pet : new ArrayList<>(Pet.getActivePetsForOwner(p.getUniqueId()))) {
-            if (pet.getTamingProgress() < 1) continue;
+            if (pet.getTamingProgress() < 1 || pet.getAiMode() != PetAIMode.FOLLOW) continue;
             pet.despawn(PetDespawnReason.TELEPORT);
             new BukkitRunnable() {
                 @Override
@@ -352,7 +359,9 @@ public class PetListener implements Listener {
         UUID uuid = e.getPlayer().getUniqueId();
         if (e.getNewGameMode() != GameMode.SPECTATOR) return;
         for (Pet pet : new ArrayList<>(Pet.getActivePetsForOwner(uuid))) {
-            pet.despawn(PetDespawnReason.GAMEMODE);
+            if (pet.getAiMode() == PetAIMode.FOLLOW) {
+                pet.despawn(PetDespawnReason.GAMEMODE);
+            }
         }
     }
 

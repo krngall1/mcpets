@@ -8,6 +8,7 @@ import lombok.Setter;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -25,7 +26,7 @@ public class PlayerDataNoDatabase extends AbstractConfig {
     public ConcurrentHashMap<String, String> mapOfRegisteredInventories = new ConcurrentHashMap<>();
     @Getter
     @Setter
-    private String lastActivePet;
+    private List<String> lastActivePets;
 
     private PlayerDataNoDatabase(UUID uuid) {
         this.uuid = uuid;
@@ -53,7 +54,7 @@ public class PlayerDataNoDatabase extends AbstractConfig {
         if (getConfig().get("PetStats") == null)
             getConfig().set("PetStats", new ArrayList<String>());
         if (getConfig().get("LastActivePet") == null)
-            getConfig().set("LastActivePet", "");
+            getConfig().set("LastActivePet", new ArrayList<String>());
 
         reload();
     }
@@ -94,7 +95,7 @@ public class PlayerDataNoDatabase extends AbstractConfig {
 
         getConfig().set("PetStats", serializedStatsMap);
 
-        getConfig().set("LastActivePet", lastActivePet);
+        getConfig().set("LastActivePet", lastActivePets);
         super.save();
     }
 
@@ -130,6 +131,6 @@ public class PlayerDataNoDatabase extends AbstractConfig {
             mapOfRegisteredInventories.put(id, seriaInventory);
             PetInventory.unserialize(seria, uuid);
         }
-        lastActivePet = getConfig().getString("LastActivePet");
+        lastActivePets = getConfig().getStringList("LastActivePet");
     }
 }

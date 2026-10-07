@@ -1,5 +1,6 @@
 package fr.nocsy.mcpets.mythicmobs.mechanics;
 
+import fr.nocsy.mcpets.data.PetAIMode;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
@@ -62,7 +63,7 @@ public class SetPetMechanic extends SkillMechanic implements ITargetedEntitySkil
                                 pet.changeActiveMobTo(
                                         activeMob,
                                         player.getUniqueId(),
-                                        followOwner,
+                                        PetAIMode.FOLLOW,
                                         PetDespawnReason.SETPET_REPLACED
                                 )
                         )

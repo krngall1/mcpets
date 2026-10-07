@@ -1,5 +1,6 @@
 package fr.nocsy.mcpets.mythicmobs.mechanics;
 
+import fr.nocsy.mcpets.data.PetAIMode;
 import org.bukkit.entity.Entity;
 
 import fr.nocsy.mcpets.data.Pet;
@@ -15,18 +16,18 @@ import io.lumine.mythic.core.utils.annotations.MythicMechanic;
 import io.lumine.mythic.bukkit.events.MythicMechanicLoadEvent;
 
 @MythicMechanic(
-        name = "petFollow"
+        name = "petAIMode"
 )
-public class PetFollowMechanic extends SkillMechanic implements ITargetedEntitySkill {
+public class PetAIModeMechanic extends SkillMechanic implements ITargetedEntitySkill {
 
-    private final boolean follow;
+    private final PetAIMode mode;
 
-    public PetFollowMechanic(MythicMechanicLoadEvent event) {
+    public PetAIModeMechanic(MythicMechanicLoadEvent event) {
         super(event.getContainer().getManager(), event.getContainer().getFile());
 
         MythicLineConfig config = event.getConfig();
 
-        follow = config.getBoolean(new String[]{"follow"}, true);
+        mode = PetAIMode.valueOf(config.getString(new String[]{"mode"}, "follow"));
     }
 
     @Override
@@ -38,7 +39,12 @@ public class PetFollowMechanic extends SkillMechanic implements ITargetedEntityS
             return SkillResult.CONDITION_FAILED;
         }
 
-        pet.setFollowOwner(follow);
+        pet.setAiMode(mode);
+
+        if (mode == PetAIMode.WANDER) {
+            pet.setWanderCenter(entity.getLocation());
+            pet.setWanderRange(16);
+        }
 
         return SkillResult.SUCCESS;
     }
