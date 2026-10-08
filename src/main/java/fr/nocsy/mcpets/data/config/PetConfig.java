@@ -72,7 +72,7 @@ public class PetConfig extends AbstractConfig {
         reorderKeys("Id", "MythicMob", "Permission", "Distance", "SpawnRange", "ComingBackRange",
                 "Mountable", "MountType", "MountPermission", "DespawnOnDismount", "AutoRide",
                 "Invulnerable", "InventorySize", "UseDefaultMythicMobsName",
-                "DespawnSkill", "SpawnSkill", "Taming", "Icon", "Signals", "Levels");
+                "DespawnSkill", "SpawnSkill", "LoadSkill", "Taming", "Icon", "Signals", "Levels");
         save();
     }
 
@@ -143,6 +143,7 @@ public class PetConfig extends AbstractConfig {
         final int spawnRange = getConfig().getInt("SpawnRange");
         final int comingBackRange = getConfig().getInt("ComingBackRange");
         final String despawnSkillName = getConfig().getString("DespawnSkill");
+        final String loadSkillName = getConfig().getString("LoadSkill");
         final String tamingSkillName = getConfig().getString("Taming.TamingProgressSkill");
         final String tamingOverSkillName = getConfig().getString("Taming.TamingFinishedSkill");
 
@@ -195,6 +196,7 @@ public class PetConfig extends AbstractConfig {
         pet.setEnableSignalStickFromMenu(enableSignalStickFromMenu);
 
         pet.setDespawnSkill(despawnSkillName);
+        pet.setLoadSkill(loadSkillName);
         pet.setTamingProgressSkill(tamingSkillName);
         pet.setTamingOverSkill(tamingOverSkillName);
 

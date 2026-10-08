@@ -5,6 +5,9 @@ import java.util.List;
 import java.util.UUID;
 import java.util.HashMap;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Optional;
+import java.util.Set;
 
 import fr.nocsy.mcpets.data.*;
 import org.bukkit.Bukkit;
@@ -40,6 +43,10 @@ import fr.nocsy.mcpets.events.PetOwnerInteractEvent;
 import fr.nocsy.mcpets.data.inventories.PetInteractionMenu;
 import fr.nocsy.mcpets.data.inventories.MountInteractionMenu;
 
+import com.destroystokyo.paper.event.entity.EntityAddToWorldEvent;
+import org.bukkit.NamespacedKey;
+import org.bukkit.persistence.PersistentDataType;
+import io.lumine.mythic.core.mobs.ActiveMob;
 import io.lumine.mythic.bukkit.events.MythicMobDeathEvent;
 import io.lumine.mythic.bukkit.events.MythicMobDespawnEvent;
 
@@ -366,9 +373,66 @@ public class PetListener implements Listener {
     }
 
     /**
+     * MythicMobs has no trigger for a mob being loaded again with its chunk,
+     * so pets that stayed in the world run their LoadSkill (pet config) to restore their behaviour and animations
+     */
+    private final Set<UUID> loadingPets = new HashSet<>();
+    @EventHandler
+    public void petLoaded(EntityAddToWorldEvent e) {
+        final Entity entity = e.getEntity();
+        // A pet MCPets is spawning right now gets its pet id after this event, so it's skipped here
+        if (!entity.getPersistentDataContainer().has(PET_ID_KEY, PersistentDataType.STRING)) return;
+        // The event can fire several times for one load
+        final UUID uuid = entity.getUniqueId();
+        if (!loadingPets.add(uuid)) return;
+
+        new BukkitRunnable() {
+            private int attempts = 0;
+
+            @Override
+            public void run() {
+                final Optional<ActiveMob> found = entity.isValid()
+                        ? MCPets.getMythicMobs().getMobManager().getActiveMob(uuid)
+                        : Optional.empty();
+
+                // For a few ticks MythicMobs can still hand back the mob from before the chunk unloaded,
+                // whose entity is no longer valid, so we wait for the reloaded one
+                if (found.isEmpty() || found.get().getEntity() == null || !found.get().getEntity().getBukkitEntity().isValid()) {
+                    if (++attempts < 20 && entity.isValid()) return;
+                    Debugger.send("§cPet entity " + uuid + " loaded but MythicMobs never gave back its reloaded mob");
+                    loadingPets.remove(uuid);
+                    cancel();
+                    return;
+                }
+
+                final ActiveMob activeMob = found.get();
+                // The pet usually is still linked (metadata is kept by uuid) but drives the old mob,
+                // so it's pointed at the reloaded one
+                final Pet pet = Pet.getFromEntity(entity);
+                if (pet != null && pet.getOwner() != null && pet.getActiveMob() != activeMob) {
+                    Debugger.send("§7Relinking pet " + pet.getId() + " to its reloaded entity " + uuid);
+                    pet.relink(activeMob, pet.getOwner(), pet.getAiMode());
+                }
+
+                // Run the pet's LoadSkill, read from the pet config when the entity isn't linked (e.g. owner offline after a restart)
+                final Pet skillSource = pet != null ? pet
+                        : Pet.getFromId(entity.getPersistentDataContainer().get(PET_ID_KEY, PersistentDataType.STRING));
+                if (skillSource != null && skillSource.castLoadSkill(activeMob))
+                    Debugger.send("§7Ran the load skill of pet entity " + uuid);
+                else
+                    Debugger.send("§7Pet entity " + uuid + " loaded, it has no LoadSkill to run");
+                // The add event can fire again shortly after for the same load, so the uuid is held a bit longer
+                Bukkit.getScheduler().runTaskLater(MCPets.getInstance(), () -> loadingPets.remove(uuid), 40L);
+                cancel();
+            }
+        }.runTaskTimer(MCPets.getInstance(), 1L, 5L);
+    }
+
+    /**
      * Handle random despawn
      */
     private final Map<UUID, Integer> repeatRespawn = new HashMap<>();
+    private static final NamespacedKey PET_ID_KEY = new NamespacedKey("mcpets", "pet_id");
     @EventHandler
     public void despawn(MythicMobDespawnEvent e) {
         if (e.getEntity() == null) return;

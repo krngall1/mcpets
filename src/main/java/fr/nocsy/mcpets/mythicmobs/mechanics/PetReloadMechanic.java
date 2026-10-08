@@ -59,10 +59,17 @@ public class PetReloadMechanic extends SkillMechanic implements ITargetedEntityS
         }
         System.out.println("Pet was null");
 
-        OfflinePlayer owner = Bukkit.getOfflinePlayer(UUID.fromString(ownerUUID));
+        // The owner stored on the entity by MCPets wins, else the uuid given to the mechanic (e.g. a saved variable)
+        final UUID ownerId = resolveOwner(entity, ownerUUID);
+        if (ownerId == null) {
+            System.out.println("Couldn't find the owner of the pet (" + ownerUUID + ").");
+            return SkillResult.CONDITION_FAILED;
+        }
+
+        OfflinePlayer owner = Bukkit.getOfflinePlayer(ownerId);
         System.out.println(owner.getName());
         if (!owner.hasPlayedBefore() || !owner.isOnline()) {
-            System.out.println("Couldn't find online player (" + ownerUUID + ").");
+            System.out.println("Couldn't find online player (" + ownerId + ").");
             return SkillResult.CONDITION_FAILED;
         }
 
@@ -81,8 +88,7 @@ public class PetReloadMechanic extends SkillMechanic implements ITargetedEntityS
         Optional<ActiveMob> activeMob = MCPets.getMythicMobs().getMobManager().getActiveMob(entity.getUniqueId());
         if (activeMob.isEmpty()) return SkillResult.CONDITION_FAILED;
 
-        // The pet MCPets still has in memory (e.g. after a MythicMobs reload)
-        final UUID ownerId = UUID.fromString(ownerUUID);
+        // The pet MCPets still has in memory (e.g. after a MythicMobs reload or a chunk reload)
         Pet ownerPet = Pet.getActivePetsForOwner(ownerId).stream()
                 .filter(activePet -> activePet.getId().equals(entityPetID))
                 .findFirst()
@@ -106,6 +112,19 @@ public class PetReloadMechanic extends SkillMechanic implements ITargetedEntityS
         }.runTaskLater(MCPets.getInstance(), 10L);
 
         return SkillResult.SUCCESS;
+    }
+
+    private static UUID resolveOwner(final Entity entity, final String fallback) {
+        final String stored = entity.getPersistentDataContainer().get(Pet.OWNER_KEY, PersistentDataType.STRING);
+        for (final String candidate : new String[]{stored, fallback}) {
+            if (candidate == null || candidate.isEmpty()) continue;
+            try {
+                return UUID.fromString(candidate);
+            } catch (final IllegalArgumentException ignored) {
+                // e.g. "null" when the variable was saved before the pet was linked
+            }
+        }
+        return null;
     }
 
 }

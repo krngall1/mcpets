@@ -147,6 +147,11 @@ public class Pet {
 
     @Getter
     @Setter
+    // Skill run when the pet's entity comes back into the world with its chunk (or after a restart)
+    private String loadSkill;
+
+    @Getter
+    @Setter
     private String tamingProgressSkill;
 
     @Getter
@@ -240,6 +245,8 @@ public class Pet {
     // Where the wander home is stored on the entity, so it survives restarts and relinks
     private static final NamespacedKey WANDER_CENTER_KEY = new NamespacedKey("mcpets", "wander_center");
     private static final NamespacedKey WANDER_RANGE_KEY = new NamespacedKey("mcpets", "wander_range");
+    // The owner is stored on the entity too, so a pet that stayed in the world can be relinked to them
+    public static final NamespacedKey OWNER_KEY = new NamespacedKey("mcpets", "owner");
 
     /**
      * Constructor only used to create a fundamental Pet. If you wish to use a pet instance, please refer to copy()
@@ -390,7 +397,10 @@ public class Pet {
      * Add a pet to a player's active pets list
      */
     public static void addActivePet(final UUID owner, final Pet pet) {
-        activePets.computeIfAbsent(owner, k -> new ArrayList<>()).add(pet);
+        final List<Pet> pets = activePets.computeIfAbsent(owner, k -> new ArrayList<>());
+        // A relinked pet is already in the list, it shouldn't be counted twice
+        if (!pets.contains(pet))
+            pets.add(pet);
     }
 
     /**
@@ -727,6 +737,8 @@ public class Pet {
                     }
                     NamespacedKey key = new NamespacedKey("mcpets", "pet_id");
                     ent.getPersistentDataContainer().set(key, PersistentDataType.STRING, id);
+                    if (owner != null)
+                        ent.getPersistentDataContainer().set(OWNER_KEY, PersistentDataType.STRING, owner.toString());
                     // A wandering pet respawned by MCPets (e.g. teleported home) keeps its mode tag and home
                     if (aiMode == PetAIMode.WANDER && wanderCenter != null) {
                         ent.addScoreboardTag(PetAIMode.WANDER.getMode());
@@ -1123,6 +1135,22 @@ public class Pet {
     }
 
     /**
+     * Run the pet's LoadSkill on the given mob, e.g. when it comes back into the world with its chunk
+     * Returns true if a skill was run
+     */
+    public boolean castLoadSkill(final ActiveMob mob) {
+        final Skill loadSkillMM = loadSkill == null ? null : Utils.getSkill(loadSkill);
+        if (loadSkillMM == null) return false;
+        try {
+            loadSkillMM.execute(new SkillMetadataImpl(SkillTriggers.CUSTOM, mob, mob.getEntity()));
+        } catch (final Exception ex) {
+            Debugger.send("§cCould not run the load skill " + loadSkill + " of pet " + id + ": " + ex.getMessage());
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * Link an entity that is already in the world back to this pet, in the given mode
      * Used for sitting and wandering pets that stayed in the world while MCPets forgot about them (e.g. after a restart)
      */
@@ -1131,8 +1159,10 @@ public class Pet {
         setPetStats();
         final boolean replaced = changeActiveMobTo(mob, owner, aiMode, PetDespawnReason.REPLACED);
 
-        // Bring back the wander home stored on the entity, else the pet's current spot becomes its home
         final Entity ent = mob.getEntity().getBukkitEntity();
+        ent.getPersistentDataContainer().set(OWNER_KEY, PersistentDataType.STRING, owner.toString());
+
+        // Bring back the wander home stored on the entity, else the pet's current spot becomes its home
         if (aiMode == PetAIMode.WANDER && !loadWanderHome(ent))
             setWanderHome(ent.getLocation(), GlobalConfig.getInstance().getWanderRange());
         return replaced;
@@ -1455,6 +1485,7 @@ public class Pet {
         pet.setSpawnRange(spawnRange);
         pet.setComingBackRange(comingBackRange);
         pet.setDespawnSkill(despawnSkill);
+        pet.setLoadSkill(loadSkill);
         pet.setTamingProgressSkill(tamingProgressSkill);
         pet.setTamingOverSkill(tamingOverSkill);
         pet.setMountable(mountable);

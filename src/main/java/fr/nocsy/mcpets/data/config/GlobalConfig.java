@@ -54,6 +54,8 @@ public class GlobalConfig extends AbstractConfig {
     @Getter
     private int maxNameLength;
     @Getter
+    private boolean nameTagAlwaysVisible;
+    @Getter
     private int maxActivePets;
     @Getter
     private int maxActiveMounts;
@@ -171,6 +173,8 @@ public class GlobalConfig extends AbstractConfig {
             getConfig().set("WanderRange", 16);
         if (getConfig().get("MaxNameLength") == null)
             getConfig().set("MaxNameLength", 16);
+        if (getConfig().get("NameTagAlwaysVisible") == null)
+            getConfig().set("NameTagAlwaysVisible", false);
         if (getConfig().get("InventorySize") == null)
             getConfig().set("InventorySize", -1);
         if (getConfig().get("PercentHealthOnRespawn") == null)
@@ -266,6 +270,7 @@ public class GlobalConfig extends AbstractConfig {
         distanceTeleport = getConfig().getInt("DistanceTeleport");
         wanderRange = getConfig().getDouble("WanderRange");
         maxNameLength = getConfig().getInt("MaxNameLength");
+        nameTagAlwaysVisible = getConfig().getBoolean("NameTagAlwaysVisible");
         enableClickBackToMenu = getConfig().getBoolean("EnableClickBackToMenu");
         activateBackMenuIcon = getConfig().getBoolean("ActivateBackMenuIcon");
         adaptiveInventory = getConfig().getInt("InventorySize");

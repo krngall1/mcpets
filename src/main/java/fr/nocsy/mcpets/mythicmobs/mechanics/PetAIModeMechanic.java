@@ -43,9 +43,11 @@ public class PetAIModeMechanic extends SkillMechanic implements ITargetedEntityS
             return SkillResult.CONDITION_FAILED;
         }
 
+        // Re-applying wander to a pet that's already wandering (e.g. a refresh skill) keeps its home
+        final boolean keepHome = mode == PetAIMode.WANDER && pet.getAiMode() == PetAIMode.WANDER && pet.getWanderCenter() != null;
         pet.setAiMode(mode);
 
-        if (mode == PetAIMode.WANDER) {
+        if (mode == PetAIMode.WANDER && !keepHome) {
             pet.setWanderHome(entity.getLocation(), range > 0 ? range : GlobalConfig.getInstance().getWanderRange());
         }
 

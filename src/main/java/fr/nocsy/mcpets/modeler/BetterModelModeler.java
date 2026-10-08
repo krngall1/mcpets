@@ -3,6 +3,7 @@ package fr.nocsy.mcpets.modeler;
 import fr.nocsy.mcpets.data.Pet;
 import fr.nocsy.mcpets.modeler.bone.AbstractNameTag;
 import fr.nocsy.mcpets.modeler.bone.BetterModelNameTag;
+import fr.nocsy.mcpets.modeler.bone.LookAtNameDisplay;
 import fr.nocsy.mcpets.modeler.listeners.BetterModelListeners;
 import fr.nocsy.mcpets.utils.debug.Debugger;
 import kr.toxicity.model.api.BetterModel;
@@ -124,6 +125,7 @@ public class BetterModelModeler implements AbstractModeler {
         if (registry == null)
             return;
         registry.close();
+        LookAtNameDisplay.remove(petUUID);
         Debugger.send("§a[BetterModel] Removed model for pet " + petUUID);
     }
 
@@ -136,7 +138,7 @@ public class BetterModelModeler implements AbstractModeler {
         for (EntityTracker tracker : registry.trackers()) {
             RenderedBone bone = tracker.bone("name");
             if (bone != null && bone.getNametag() != null) {
-                return new BetterModelNameTag(bone.getNametag());
+                return new BetterModelNameTag(bone.getNametag(), petUUID);
             }
         }
         Debugger.send("§e[BetterModel] No nametag bone found for pet " + petUUID);
@@ -180,6 +182,7 @@ public class BetterModelModeler implements AbstractModeler {
             listeners.unregister();
             listeners = null;
         }
+        LookAtNameDisplay.removeAll();
     }
 
     /**
