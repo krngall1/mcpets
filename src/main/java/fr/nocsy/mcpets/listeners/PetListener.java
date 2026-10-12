@@ -431,6 +431,16 @@ public class PetListener implements Listener {
                     return;
                 }
 
+                // A following pet's entity that survived a restart (or a copy of a pet that's already out) would
+                // stand next to the pet MCPets respawned, so it's removed
+                if (Pet.isLeftoverFollowEntity(entity, pet)) {
+                    Debugger.send("§7Removing pet entity " + uuid + ", it's a leftover copy of a following pet");
+                    Pet.removeUntrackedEntity(entity);
+                    loadingPets.remove(uuid);
+                    cancel();
+                    return;
+                }
+
                 // The pet usually is still linked (metadata is kept by uuid) but drives the old mob,
                 // so it's pointed at the reloaded one
                 if (pet != null && pet.getOwner() != null && pet.getActiveMob() != activeMob) {

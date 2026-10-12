@@ -1429,6 +1429,30 @@ public class Pet {
     }
 
     /**
+     * Is this a pet entity left over from a following pet, e.g. one saved with its chunk while the server stopped?
+     * Following pets are respawned near their owner, so an entity of theirs that isn't the pet's current one is a duplicate.
+     * Sitting and wandering pets (tagged sit or wander) stay in the world on purpose and are never leftovers.
+     */
+    public static boolean isLeftoverFollowEntity(final Entity entity, final Pet linkedPet) {
+        if (linkedPet == null) {
+            final Set<String> tags = entity.getScoreboardTags();
+            return !tags.contains(PetAIMode.SIT.getMode()) && !tags.contains(PetAIMode.WANDER.getMode());
+        }
+        final ActiveMob current = linkedPet.getActiveMob();
+        final Entity currentEntity = current != null && current.getEntity() != null ? current.getEntity().getBukkitEntity() : null;
+        return currentEntity != null && currentEntity.isValid() && !currentEntity.getUniqueId().equals(entity.getUniqueId());
+    }
+
+    /**
+     * Remove a pet entity that MCPets doesn't drive (a leftover or revoked pet), with its model
+     */
+    public static void removeUntrackedEntity(final Entity entity) {
+        MCPets.getModeler().removeModel(entity.getUniqueId());
+        MCPets.getMythicMobs().getMobManager().getActiveMob(entity.getUniqueId()).ifPresent(ActiveMob::remove);
+        entity.remove();
+    }
+
+    /**
      * Run the pet's LoadSkill on the given mob, e.g. when it comes back into the world with its chunk
      * Returns true if a skill was run
      */
@@ -1552,8 +1576,12 @@ public class Pet {
             else if (reason != PetDespawnReason.DEATH) {
                 // Do we have a despawn skill to trigger or a skin swap?
                 final Skill despawnSkillMM = Utils.getSkill(despawnSkill);
+                // While the server stops, the despawn skill may never get to remove the entity
+                // (e.g. a remove mechanic run on the next tick), so the entity is removed directly.
+                // Otherwise a following pet is saved with its chunk and comes back next to its respawned copy
                 if (despawnSkillMM != null
-                        && reason != PetDespawnReason.SKIN) {
+                        && reason != PetDespawnReason.SKIN
+                        && !Bukkit.isStopping()) {
                     try {
                         despawnSkillMM.execute(new SkillMetadataImpl(SkillTriggers.CUSTOM, activeMob, activeMob.getEntity()));
                     } catch (final Exception ex) {

@@ -34,7 +34,7 @@ public class ArgumentName extends AArgument {
             return;
         }
 
-        // No name provided: prompt in chat (original behavior)
+        // No name provided: open the rename dialog
         if (args.length == 1) {
             pet.setLastInteractedWith(p);
             PetInteractionMenuListener.changeName(p);

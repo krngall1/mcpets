@@ -1,0 +1,178 @@
+--- a/src/main/java/fr/nocsy/mcpets/listeners/PetInteractionMenuListener.java
++++ b/src/main/java/fr/nocsy/mcpets/listeners/PetInteractionMenuListener.java
+@@ -1,22 +1,25 @@
+ package fr.nocsy.mcpets.listeners;
+ 
+-import java.util.UUID;
++import java.time.Duration;
+ import java.util.List;
+ import java.util.Optional;
+-import java.util.concurrent.CopyOnWriteArrayList;
+-
+-import lombok.Getter;
+ 
+ import org.jetbrains.annotations.NotNull;
+ 
+ import org.bukkit.entity.Player;
++import net.kyori.adventure.text.Component;
+ import net.kyori.adventure.text.TextReplacementConfig;
++import net.kyori.adventure.text.event.ClickCallback;
++import io.papermc.paper.dialog.Dialog;
++import io.papermc.paper.registry.data.dialog.ActionButton;
++import io.papermc.paper.registry.data.dialog.DialogBase;
++import io.papermc.paper.registry.data.dialog.action.DialogAction;
++import io.papermc.paper.registry.data.dialog.input.DialogInput;
++import io.papermc.paper.registry.data.dialog.type.DialogType;
+ import org.bukkit.event.Listener;
+ import org.bukkit.event.EventHandler;
+-import org.bukkit.event.EventPriority;
+ import org.bukkit.inventory.ItemStack;
+ import org.bukkit.scheduler.BukkitRunnable;
+-import org.bukkit.event.player.AsyncPlayerChatEvent;
+ import org.bukkit.event.inventory.InventoryClickEvent;
+ 
+ import fr.nocsy.mcpets.MCPets;
+@@ -37,15 +40,72 @@
+ 
+ public class PetInteractionMenuListener implements Listener {
+ 
+-    @Getter
+-    private static final List<UUID> waitingForAnswer = new CopyOnWriteArrayList<>();
++    private static final String RENAME_INPUT_KEY = "pet_name";
+ 
++    /**
++     * Open the rename dialog. Confirm with an empty box removes the nickname, cancel changes nothing.
++     */
+     public static void changeName(@NotNull final Player p) {
+-        if (!waitingForAnswer.contains(p.getUniqueId())) {
+-            waitingForAnswer.add(p.getUniqueId());
++        final Pet pet = Optional.ofNullable(Pet.getFromLastInteractedWith(p)).orElse(Pet.getFromLastOpInteractedWith(p));
++        if (pet == null) {
++            Language.REVOKED_BEFORE_CHANGES.sendMessage(p);
++            return;
+         }
+-        Language.TYPE_NAME_IN_CHAT.sendMessage(p);
+-        Language.IF_WISH_TO_REMOVE_NAME.sendMessageFormatted(p, new FormatArg("%tag%", Language.TAG_TO_REMOVE_NAME.getMessage()));
++
++        final ActionButton confirm = ActionButton.builder(Component.text("Confirm"))
++                .action(DialogAction.customClick((response, audience) -> {
++                    final String input = response.getText(RENAME_INPUT_KEY);
++                    applyName(p, pet, input == null ? "" : input);
++                }, ClickCallback.Options.builder().uses(1).lifetime(Duration.ofMinutes(10)).build()))
++                .build();
++        // No action: the dialog just closes and the name is left alone
++        final ActionButton cancel = ActionButton.builder(Component.text("Cancel")).build();
++
++        final Dialog dialog = Dialog.create(builder -> builder.empty()
++                .base(DialogBase.builder(Component.text("Rename your pet"))
++                        .canCloseWithEscape(true)
++                        .inputs(List.of(DialogInput.text(RENAME_INPUT_KEY, Utils.toComponent("<green>Type your pet's new name:"))
++                                .width(300)
++                                .maxLength(256)
++                                .build()))
++                        .build())
++                .type(DialogType.confirmation(confirm, cancel)));
++
++        // Shown a tick later, the menu click closes the inventory right after this call
++        new BukkitRunnable() {
++            @Override
++            public void run() {
++                if (p.isOnline()) p.showDialog(dialog);
++            }
++        }.runTaskLater(MCPets.getInstance(), 1L);
++    }
++
++    private static void applyName(final Player p, final Pet pet, String name) {
++        name = name.replace("'", "");
++        name = name.replace(";;", ";").replace(";;;", ";").trim();
++
++        if (!pet.isStillHere()) {
++            Language.REVOKED_BEFORE_CHANGES.sendMessage(p);
++            return;
++        }
++
++        final boolean stripColor = !p.hasPermission(PPermission.COLOR.getPermission());
++
++        // Blank box removes the nickname
++        if (name.isEmpty()) {
++            pet.setDisplayName(Language.TAG_TO_REMOVE_NAME.getMessage(), true, stripColor);
++            Language.NICKNAME_CHANGED_SUCCESSFULY.sendMessage(p);
++            return;
++        }
++
++        final String blackListedWord = Utils.isInBlackList(name);
++        if (blackListedWord != null) {
++            Language.BLACKLISTED_WORD.sendMessageFormatted(p, new FormatArg("%word%", blackListedWord));
++            return;
++        }
++
++        pet.setDisplayName(name, true, stripColor);
++        Language.NICKNAME_CHANGED_SUCCESSFULY.sendMessage(p);
+     }
+ 
+     public static void mount(@NotNull final Player p, final Pet pet) {
+@@ -167,41 +227,6 @@
+             }
+         }
+     }
+-
+-    @EventHandler(priority = EventPriority.LOWEST)
+-    public void chat(final AsyncPlayerChatEvent e) {
+-        final Player p = e.getPlayer();
+-
+-        if (waitingForAnswer.contains(p.getUniqueId())) {
+-            waitingForAnswer.remove(p.getUniqueId());
+-            e.setCancelled(true);
+-
+-            String name = e.getMessage().replace("'", "");
+-            name = name.replace(";;", ";").replace(";;;", ";");
+-
+-            final String blackListedWord = Utils.isInBlackList(name);
+-            if (blackListedWord != null) {
+-                Language.BLACKLISTED_WORD.sendMessageFormatted(p, new FormatArg("%word%", blackListedWord));
+-                return;
+-            }
+-
+-            final Pet pet = Optional.ofNullable(Pet.getFromLastInteractedWith(p)).orElse(Pet.getFromLastOpInteractedWith(p));
+-
+-            if (pet != null && pet.isStillHere()) {
+-                boolean stripColor = !p.hasPermission(PPermission.COLOR.getPermission());
+-
+-                if (name.isEmpty()) {
+-                    Language.NICKNAME_NOT_CHANGED.sendMessage(p);
+-                    return;
+-                }
+-                pet.setDisplayName(name, true, stripColor);
+-
+-                Language.NICKNAME_CHANGED_SUCCESSFULY.sendMessage(p);
+-            } else {
+-                Language.REVOKED_BEFORE_CHANGES.sendMessage(p);
+-            }
+-        }
+-    }
+ 
+     private void openBackPetMenu(final Player p) {
+         final PetMenu menu = new PetMenu(p, 0);
+--- a/pom.xml
++++ b/pom.xml
+@@ -125,7 +125,8 @@
+         <dependency>
+             <groupId>io.papermc.paper</groupId>
+             <artifactId>paper-api</artifactId>
+-            <version>1.21-R0.1-SNAPSHOT</version>
++            <!-- 1.21.6+ needed for the Dialog API (pet rename screen) -->
++            <version>1.21.8-R0.1-SNAPSHOT</version>
+             <scope>provided</scope>
+         </dependency>
+ 
+--- a/src/main/java/fr/nocsy/mcpets/commands/mcpets/ArgumentName.java
++++ b/src/main/java/fr/nocsy/mcpets/commands/mcpets/ArgumentName.java
+@@ -34,7 +34,7 @@
+             return;
+         }
+ 
+-        // No name provided: prompt in chat (original behavior)
++        // No name provided: open the rename dialog
+         if (args.length == 1) {
+             pet.setLastInteractedWith(p);
+             PetInteractionMenuListener.changeName(p);

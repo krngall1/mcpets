@@ -68,6 +68,13 @@ public class PetReloadMechanic extends SkillMechanic implements ITargetedEntityS
         }
         System.out.println("Pet was null");
 
+        // A following pet's entity that survived a restart: MCPets respawns following pets near their owner,
+        // so relinking this one would leave two copies
+        if (Pet.isLeftoverFollowEntity(entity, null)) {
+            Pet.removeUntrackedEntity(entity);
+            return SkillResult.CONDITION_FAILED;
+        }
+
         // The owner stored on the entity by MCPets wins, else the uuid given to the mechanic (e.g. a saved variable)
         final UUID ownerId = resolveOwner(entity, ownerUUID);
         if (ownerId == null) {
