@@ -56,7 +56,13 @@ public class GlobalConfig extends AbstractConfig {
     @Getter
     private boolean nameTagAlwaysVisible;
     @Getter
-    private int maxActivePets;
+    private int maxFollowingPets;
+    @Getter
+    private int maxNonFollowingPets;
+    @Getter
+    private String sitSkill;
+    @Getter
+    private String followSkill;
     @Getter
     private int maxActiveMounts;
     @Getter
@@ -232,8 +238,18 @@ public class GlobalConfig extends AbstractConfig {
             getConfig().set("DisableFastMountWhileHoldingSignalStick", false);
         if (getConfig().get("SpawnPetAfterServerRestart") == null)
             getConfig().set("SpawnPetAfterServerRestart", true);
-        if (getConfig().get("MaxActivePets") == null)
-            getConfig().set("MaxActivePets", 1);
+        // MaxActivePets became MaxNonFollowingPets, the old value is kept
+        if (getConfig().get("MaxNonFollowingPets") == null)
+            getConfig().set("MaxNonFollowingPets", getConfig().getInt("MaxActivePets", 1));
+        getConfig().set("MaxActivePets", null);
+        if (getConfig().get("MaxFollowingPets") == null)
+            getConfig().set("MaxFollowingPets", 1);
+        // MythicMobs skill run on a following pet that MCPets sits down to make room for a new one
+        if (getConfig().get("SitSkill") == null)
+            getConfig().set("SitSkill", "pet_force_sit");
+        // MythicMobs skill run on a sitting or wandering pet summoned back from the pet menu
+        if (getConfig().get("FollowSkill") == null)
+            getConfig().set("FollowSkill", "pet_force_follow");
         if (getConfig().get("MaxActiveMounts") == null)
             getConfig().set("MaxActiveMounts", 1);
 
@@ -320,7 +336,10 @@ public class GlobalConfig extends AbstractConfig {
         }
 
         spawnPetAfterServerRestart = getConfig().getBoolean("SpawnPetAfterServerRestart");
-        maxActivePets = getConfig().getInt("MaxActivePets");
+        maxFollowingPets = getConfig().getInt("MaxFollowingPets");
+        maxNonFollowingPets = getConfig().getInt("MaxNonFollowingPets");
+        sitSkill = getConfig().getString("SitSkill");
+        followSkill = getConfig().getString("FollowSkill");
         maxActiveMounts = getConfig().getInt("MaxActiveMounts");
     }
 

@@ -1,0 +1,88 @@
+--- a/src/main/java/fr/nocsy/mcpets/data/Pet.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Pet.java
+@@ -238,6 +238,9 @@
+     @Getter
+     private Location wanderCenter = null;
+ 
++    // Where the pet was last seen loaded, so its spot can still be shown while its chunk is unloaded
++    private Location lastKnownLocation = null;
++
+     // If pet is in wander mode, how far from the center can it wander
+     @Setter
+     @Getter
+@@ -1101,6 +1104,36 @@
+     }
+ 
+     /**
++     * Where the pet is, or where it was last seen if its chunk is unloaded. Null if unknown
++     */
++    public Location getLocation() {
++        if (activeMob != null && activeMob.getEntity() != null) {
++            final Entity ent = activeMob.getEntity().getBukkitEntity();
++            if (ent != null && ent.isValid())
++                lastKnownLocation = ent.getLocation();
++        }
++        return lastKnownLocation;
++    }
++
++    /**
++     * The pet's mode for its menu icon, e.g. "Sitting at: x: 10 y: 64 z: -3"
++     */
++    public Component getModeLore() {
++        if (aiMode != PetAIMode.SIT && aiMode != PetAIMode.WANDER)
++            return Language.PET_MODE_FOLLOWING.getComponent();
++
++        // A wandering pet shows its home, a sitting one where it sits
++        final Location loc = aiMode == PetAIMode.WANDER && wanderCenter != null ? wanderCenter : getLocation();
++        if (loc == null)
++            return null;
++        final Language line = aiMode == PetAIMode.SIT ? Language.PET_MODE_SITTING : Language.PET_MODE_WANDERING;
++        return line.getComponentFormatted(
++                new FormatArg("%x%", String.valueOf(loc.getBlockX())),
++                new FormatArg("%y%", String.valueOf(loc.getBlockY())),
++                new FormatArg("%z%", String.valueOf(loc.getBlockZ())));
++    }
++
++    /**
+      * The pet's nickname if it has one, else the name of its menu icon
+      */
+     public Component getNameForMessages() {
+@@ -1232,6 +1265,7 @@
+                 }
+ 
+                 final Location petLoc = getInstance().getActiveMob().getEntity().getBukkitEntity().getLocation();
++                lastKnownLocation = petLoc;
+ 
+                 if (aiMode.equals(PetAIMode.FOLLOW)) {
+ 
+--- a/src/main/java/fr/nocsy/mcpets/data/Items.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Items.java
+@@ -339,9 +339,16 @@
+         if (!meta.hasLore()) lore = new ArrayList<>();
+         else lore = new ArrayList<>(meta.lore());
+ 
++        // The mode line goes under the nickname
++        final Component modeLore = pet.getModeLore();
+         if (pet.getCurrentName() != null && GlobalConfig.getInstance().isNameable()) {
+             lore.add(Component.empty());
+             lore.add(Language.NICKNAME.getComponentFormatted(new FormatArg("%nickname%", pet.getCurrentName())));
++            if (modeLore != null) lore.add(modeLore);
++            lore.add(Component.empty());
++        } else if (modeLore != null) {
++            lore.add(Component.empty());
++            lore.add(modeLore);
+             lore.add(Component.empty());
+         }
+ 
+--- a/src/main/java/fr/nocsy/mcpets/data/config/Language.java
++++ b/src/main/java/fr/nocsy/mcpets/data/config/Language.java
+@@ -46,6 +46,9 @@
+     PREVIOUS_PAGE_ITEM_DESCRIPTION("§eClick§7 to go backward"),
+ 
+     NICKNAME("§9Nickname : §7%nickname%"),
++    PET_MODE_SITTING("<gold>Sitting at: <gray>x: %x% y: %y% z: %z%"),
++    PET_MODE_WANDERING("<gold>Wandering around: <gray>x: %x% y: %y% z: %z%"),
++    PET_MODE_FOLLOWING("<gold>Following you"),
+     NICKNAME_ITEM_LORE("§cClick here to revoke your pet"),
+ 
+     SUMMONED("§7A pet has been summoned !"),

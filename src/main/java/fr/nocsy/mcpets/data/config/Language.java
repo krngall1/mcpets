@@ -24,6 +24,12 @@ public enum Language {
     BACK_TO_PETMENU_ITEM_NAME("§cBack to menu"),
     BACK_TO_PETMENU_ITEM_DESCRIPTION("§7Click to get back to the menu"),
 
+    SUMMON_ITEM_NAME("<green>Summon"),
+    SUMMON_ITEM_DESCRIPTION("<gold>Click to summon pet"),
+    PET_SUMMONED("<green>%pet% was summoned to you!"),
+    SUMMON_ITEM_NAME_FOLLOWING("<gray>Summon"),
+    SUMMON_ITEM_DESCRIPTION_FOLLOWING("<yellow>Pet is following you"),
+
     INVENTORY_ITEM_NAME("§6Inventory"),
     INVENTORY_ITEM_DESCRIPTION("§7Click to open the pet's inventory"),
 
@@ -40,6 +46,11 @@ public enum Language {
     PREVIOUS_PAGE_ITEM_DESCRIPTION("§eClick§7 to go backward"),
 
     NICKNAME("§9Nickname : §7%nickname%"),
+    PET_MENU_CLICK_TO_VIEW("Click to view"),
+    PET_MENU_CLICK_TO_SUMMON("Click to summon"),
+    PET_MODE_SITTING("<gold>Sitting at: <gray>x: %x% y: %y% z: %z%"),
+    PET_MODE_WANDERING("<gold>Wandering around: <gray>x: %x% y: %y% z: %z%"),
+    PET_MODE_FOLLOWING("<gold>Following you"),
     NICKNAME_ITEM_LORE("§cClick here to revoke your pet"),
 
     SUMMONED("§7A pet has been summoned !"),
@@ -144,6 +155,10 @@ public enum Language {
 
     PET_STATS_EVOLUTION_ALREADY_OWNED("§cEvolution already owned."),
     PET_STATS_MAX_LEVEL("§7Maximum level reached."),
+    PET_ALREADY_ACTIVE("§cThis pet is already out somewhere. Revoke it before summoning it again."),
+    PET_SAT_FOR_NEW_ONE("§7Your oldest following pet sat down to make room for the new one."),
+    MAX_FOLLOWING_PETS_REACHED("§cYou can have at most %max% following pets."),
+    MAX_NON_FOLLOWING_PETS_REACHED("§cYou can have at most %max% sitting or wandering pets."),
     MAX_ACTIVE_PETS_REACHED("§cYou have reached the maximum number of active pets!"),
     PET_REPLACED_BY_NEW("§e%oldpet% has been replaced by %newpet%!"),
     DEBUGGER_JOINING("§aDebugger is enabled. You are now listening to it."),

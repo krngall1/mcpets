@@ -11,6 +11,7 @@ import org.bukkit.inventory.Inventory;
 
 import fr.nocsy.mcpets.data.Pet;
 import fr.nocsy.mcpets.data.Items;
+import fr.nocsy.mcpets.data.PetAIMode;
 import fr.nocsy.mcpets.data.config.Language;
 import fr.nocsy.mcpets.data.config.GlobalConfig;
 
@@ -37,8 +38,10 @@ public class PetInteractionMenu {
             inventory.setItem(2, Items.SKINS.getItem());
         if (GlobalConfig.getInstance().isNameable())
             inventory.setItem(3, Items.RENAME.getItem());
+        // Slot 5 is the summon button, so the mount button moved to slot 8
+        inventory.setItem(5, Items.summon(pet.getAiMode() != PetAIMode.FOLLOW));
         if (GlobalConfig.getInstance().isMountable() && pet.isMountable())
-            inventory.setItem(5, Items.MOUNT.getItem());
+            inventory.setItem(8, Items.MOUNT.getItem());
         if (!pet.getSignals().isEmpty() && pet.isEnableSignalStickFromMenu())
             inventory.setItem(6, pet.getSignalStick());
         if (pet.getInventorySize() > 0)

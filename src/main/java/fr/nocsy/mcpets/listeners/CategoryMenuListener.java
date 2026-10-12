@@ -68,9 +68,7 @@ public class CategoryMenuListener implements Listener {
 
         final Pet petObject = Pet.getFromIcon(it);
         if (petObject != null) {
-            p.closeInventory();
-            final Pet pet = petObject.copy();
-            pet.spawnWithMessage(p);
+            PetMenuListener.clickPetIcon(p, petObject);
             Category.unregisterPlayerView(p);
         }
     }

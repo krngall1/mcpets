@@ -61,6 +61,7 @@ public class Pet {
 
     //---------------------------------------------------------------------
     public static final int BLOCKED = 2;
+    public static final int ALREADY_ACTIVE = 3;
     public static final int MOB_SPAWN = 0;
     public static final int DESPAWNED_PREVIOUS = 1;
     public static final int OWNER_NULL = -1;
@@ -236,6 +237,12 @@ public class Pet {
     @Setter
     @Getter
     private Location wanderCenter = null;
+
+    // Where the pet was last seen loaded, so its spot can still be shown while its chunk is unloaded
+    private Location lastKnownLocation = null;
+
+    // The pet's entity, kept while it isn't loaded (see PlacedPets)
+    private UUID entityId = null;
 
     // If pet is in wander mode, how far from the center can it wander
     @Setter
@@ -493,6 +500,46 @@ public class Pet {
     }
 
     /**
+     * The given pets with the owner's active ones first, otherwise in the same order (pets menus)
+     */
+    public static List<Pet> activeFirst(final List<Pet> pets, final UUID owner) {
+        final Set<String> activeIds = new HashSet<>();
+        for (final Pet active : Pet.getActivePetsForOwner(owner))
+            activeIds.add(active.getId());
+        final List<Pet> sorted = new ArrayList<>(pets);
+        sorted.sort(Comparator.comparing(pet -> !activeIds.contains(pet.getId())));
+        return sorted;
+    }
+
+    /**
+     * The owner's active pet with this id, if any
+     */
+    public static Pet getActivePet(final UUID owner, final String id) {
+        for (final Pet active : Pet.getActivePetsForOwner(owner))
+            if (active.getId().equals(id))
+                return active;
+        return null;
+    }
+
+    /**
+     * The pet's icon in the pets menus: active pets glint and can be clicked to view, the others to summon
+     */
+    public ItemStack buildMenuIcon(final UUID viewer) {
+        final ItemStack it = buildItem(getIcon(), true);
+        final ItemMeta meta = it.getItemMeta();
+        if (meta == null)
+            return it;
+        final boolean active = getActivePet(viewer, id) != null;
+        final List<Component> lore = meta.hasLore() ? new ArrayList<>(meta.lore()) : new ArrayList<>();
+        lore.addAll(Utils.toComponents((active ? Language.PET_MENU_CLICK_TO_VIEW : Language.PET_MENU_CLICK_TO_SUMMON).getMessage()));
+        meta.lore(lore);
+        if (active)
+            meta.setEnchantmentGlintOverride(true);
+        it.setItemMeta(meta);
+        return it;
+    }
+
+    /**
      * Clear the list of pets
      */
     public static void clearPets() {
@@ -670,8 +717,8 @@ public class Pet {
 
                 if (activePet.getId().equals(this.id)) {
                     Debugger.send("§cPlayer already has this pet active: " + this.id);
-                    // Don't spawn, just return blocked
-                    return BLOCKED;
+                    // Don't spawn, the pet may be sitting or wandering somewhere else
+                    return ALREADY_ACTIVE;
                 }
             }
             // Add to spawning set
@@ -858,9 +905,12 @@ public class Pet {
                 case Pet.OWNER_NULL:
                     Language.OWNER_NOT_FOUND.sendMessage(p);
                     break;
+                case Pet.ALREADY_ACTIVE:
+                    Language.PET_ALREADY_ACTIVE.sendMessage(p);
+                    break;
                 case Pet.MAX_ACTIVE_PETS_REACHED:
                     Language.MAX_ACTIVE_PETS_REACHED.sendMessageFormatted(p,
-                            new FormatArg("%max%", String.valueOf(GlobalConfig.getInstance().getMaxActivePets())));
+                            new FormatArg("%max%", String.valueOf(PetLimits.getMaxFollowingPets(p.getUniqueId()))));
                     break;
             }
     }
@@ -912,12 +962,13 @@ public class Pet {
         final boolean isMount = this.isMount();
         Debugger.send("§b[LIMIT CHECK] Pet " + this.id + " isMount: " + isMount);
 
-        final int maxAllowed = isMount ?
-                GlobalConfig.getInstance().getMaxActiveMounts() :
-                GlobalConfig.getInstance().getMaxActivePets();
-        Debugger.send("§b[LIMIT CHECK] Max allowed for " + (isMount ? "mounts" : "pets") + ": " + maxAllowed);
+        final int maxAllowed = GlobalConfig.getInstance().getMaxActiveMounts();
 
-        if (maxAllowed > 0) {
+        // Pets have separate limits for following and for sitting/wandering pets
+        if (!isMount) {
+            replaced = enforcePetLimits();
+        } else if (maxAllowed > 0) {
+            Debugger.send("§b[LIMIT CHECK] Max allowed for mounts: " + maxAllowed);
             // Get all active pets/mounts of the same type for this owner
             // Get all active pets/mounts of the same type for this owner
             final List<Pet> sameLevelTypePets = Pet.getActivePetsForOwner(owner).stream()
@@ -986,6 +1037,241 @@ public class Pet {
     }
 
     /**
+     * Keep the owner's pets within their following and sitting/wandering limits (see PetLimits, 0 means no limit).
+     * When this following pet goes over MaxFollowingPets, the oldest following pet sits down where it is,
+     * or is despawned if there's no room left for another sitting or wandering pet.
+     * Returns true if a pet was despawned
+     */
+    private boolean enforcePetLimits() {
+        // Sitting and wandering pets being relinked (chunk load, restart) are already placed, they don't take a follow slot
+        if (aiMode != PetAIMode.FOLLOW)
+            return false;
+        final int maxFollowing = PetLimits.getMaxFollowingPets(owner);
+        final int maxNonFollowing = PetLimits.getMaxNonFollowingPets(owner);
+        if (maxFollowing <= 0)
+            return false;
+
+        boolean despawned = false;
+        while (true) {
+            final List<Pet> pets = Pet.getActivePetsForOwner(owner).stream()
+                    .filter(p -> !p.isMount())
+                    .toList();
+            final List<Pet> following = pets.stream()
+                    .filter(p -> p.getAiMode() == PetAIMode.FOLLOW)
+                    .toList();
+            final long nonFollowing = pets.stream()
+                    .filter(p -> p.getAiMode() == PetAIMode.SIT || p.getAiMode() == PetAIMode.WANDER)
+                    .count();
+            Debugger.send("§b[LIMIT CHECK] Following: " + following.size() + "/" + maxFollowing
+                    + ", sitting or wandering: " + nonFollowing + "/" + maxNonFollowing);
+            if (following.size() <= maxFollowing)
+                break;
+
+            // The oldest following pet makes room, never the new one
+            final Pet oldest = following.stream().filter(p -> p != this).findFirst().orElse(null);
+            if (oldest == null)
+                break;
+
+            if ((maxNonFollowing <= 0 || nonFollowing < maxNonFollowing) && oldest.sitDown()) {
+                Debugger.send("§e" + oldest.getId() + " sat down to make room for " + this.id);
+                final Player ownerPlayer = Bukkit.getPlayer(owner);
+                if (ownerPlayer != null)
+                    Language.PET_SAT_FOR_NEW_ONE.sendMessage(ownerPlayer);
+                continue;
+            }
+
+            Debugger.send("§eDespawning " + oldest.getId() + " to make room for " + this.id);
+            oldest.despawn(PetDespawnReason.REPLACED);
+            despawned = true;
+        }
+        return despawned;
+    }
+
+    /**
+     * Say whether this pet can't switch to the given mode because the owner already has
+     * MaxFollowingPets following pets, or MaxNonFollowingPets sitting or wandering pets (0 means no limit).
+     * Used by the whistle through the petModeLimitReached condition
+     */
+    public boolean isModeLimitReached(final PetAIMode mode) {
+        if (owner == null || isMount())
+            return false;
+        final boolean toFollow = mode == PetAIMode.FOLLOW;
+        final boolean isFollowing = aiMode == null || aiMode == PetAIMode.FOLLOW;
+        // Sit <-> wander doesn't change the counts, and neither does staying in follow
+        if (toFollow == isFollowing)
+            return false;
+
+        final int max = toFollow ? PetLimits.getMaxFollowingPets(owner)
+                : PetLimits.getMaxNonFollowingPets(owner);
+        if (max <= 0)
+            return false;
+
+        final long count = Pet.getActivePetsForOwner(owner).stream()
+                .filter(p -> p != this && !p.isMount())
+                .filter(p -> toFollow ? p.getAiMode() == PetAIMode.FOLLOW
+                        : p.getAiMode() == PetAIMode.SIT || p.getAiMode() == PetAIMode.WANDER)
+                .count();
+        return count >= max;
+    }
+
+    /**
+     * Sit this pet down where it is, like the whistle does.
+     * Returns false if the pet isn't loaded in the world
+     */
+    public boolean sitDown() {
+        return applyMode(PetAIMode.SIT, GlobalConfig.getInstance().getSitSkill());
+    }
+
+    /**
+     * Bring a sitting or wandering pet back to its owner in follow mode (summon button of the pet menu).
+     * A loaded pet just starts following, and the follow AI walks or teleports it to the owner.
+     * A pet in an unloaded chunk is spawned again at the owner, and the old entity is removed when its chunk loads
+     */
+    public boolean summonToOwner() {
+        if (aiMode == PetAIMode.FOLLOW || removed || owner == null)
+            return false;
+        final Player ownerPlayer = Bukkit.getPlayer(owner);
+        if (ownerPlayer == null)
+            return false;
+
+        if (applyMode(PetAIMode.FOLLOW, GlobalConfig.getInstance().getFollowSkill()))
+            return true;
+
+        // Not loaded: despawn() remembers the old entity in RevokedPets, then a following copy spawns at the owner
+        Debugger.send("§7Pet " + id + " is in an unloaded chunk, spawning it again at its owner.");
+        despawn(PetDespawnReason.TELEPORT);
+        aiMode = PetAIMode.FOLLOW;
+        wanderCenter = null;
+        spawn(ownerPlayer, ownerPlayer.getLocation());
+        return true;
+    }
+
+    /**
+     * Where the pet is, or where it was last seen if its chunk is unloaded. Null if unknown
+     */
+    public Location getLocation() {
+        if (activeMob != null && activeMob.getEntity() != null) {
+            final Entity ent = activeMob.getEntity().getBukkitEntity();
+            if (ent != null && ent.isValid())
+                lastKnownLocation = ent.getLocation();
+        }
+        return lastKnownLocation;
+    }
+
+    /**
+     * The uuid of the pet's entity, also known while it isn't loaded
+     */
+    public UUID getEntityId() {
+        if (activeMob != null && activeMob.getEntity() != null)
+            return activeMob.getEntity().getUniqueId();
+        return entityId;
+    }
+
+    /**
+     * Set up a sitting or wandering pet restored after a restart whose entity isn't loaded yet (see PlacedPets).
+     * It has no ActiveMob until PetListener.petLoaded relinks it
+     */
+    public void restorePlaced(final PetAIMode mode, final UUID entityId, final Location location,
+                              final Location center, final double range) {
+        this.aiMode = mode;
+        this.entityId = entityId;
+        this.lastKnownLocation = location;
+        this.wanderCenter = center;
+        this.wanderRange = range;
+        // Only owned pets are placed, and copies start untamed, which hides their menu
+        this.tamingProgress = 1;
+        setRemoved(false);
+        setPetStats();
+    }
+
+    /**
+     * The restored pet waiting for the entity with this uuid to load, if any
+     */
+    public static Pet getPlacedPet(final UUID entityId) {
+        for (final List<Pet> pets : Pet.getActivePets().values()) {
+            for (final Pet pet : pets) {
+                if (pet.getActiveMob() == null && entityId.equals(pet.entityId))
+                    return pet;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The pet's mode for its menu icon, e.g. "Sitting at: x: 10 y: 64 z: -3"
+     */
+    public Component getModeLore() {
+        if (aiMode != PetAIMode.SIT && aiMode != PetAIMode.WANDER)
+            return Language.PET_MODE_FOLLOWING.getComponent();
+
+        // A wandering pet shows its home, a sitting one where it sits
+        final Location loc = aiMode == PetAIMode.WANDER && wanderCenter != null ? wanderCenter : getLocation();
+        if (loc == null)
+            return null;
+        final Language line = aiMode == PetAIMode.SIT ? Language.PET_MODE_SITTING : Language.PET_MODE_WANDERING;
+        return line.getComponentFormatted(
+                new FormatArg("%x%", String.valueOf(loc.getBlockX())),
+                new FormatArg("%y%", String.valueOf(loc.getBlockY())),
+                new FormatArg("%z%", String.valueOf(loc.getBlockZ())));
+    }
+
+    /**
+     * The pet's nickname if it has one, else the name of its menu icon
+     */
+    public Component getNameForMessages() {
+        if (currentName != null && !currentName.isEmpty()
+                && !currentName.equalsIgnoreCase(Language.TAG_TO_REMOVE_NAME.getMessage()))
+            return Utils.toComponent(currentName);
+        final Pet objectPet = Pet.getFromId(id);
+        final ItemStack petIcon = objectPet != null ? objectPet.getIcon() : icon;
+        if (petIcon != null && petIcon.hasItemMeta() && petIcon.getItemMeta().hasDisplayName())
+            return petIcon.getItemMeta().displayName();
+        return Component.text(id);
+    }
+
+    /**
+     * Switch a loaded pet to the given mode from Java, like the whistle does.
+     * Java sets the mode and the tags, the given MythicMobs skill (config.yml) does the rest (speed, AI goals).
+     * Returns false if the pet isn't loaded in the world
+     */
+    private boolean applyMode(final PetAIMode mode, final String skillName) {
+        if (!isStillHere())
+            return false;
+        final Entity ent = activeMob.getEntity().getBukkitEntity();
+        if (!ent.isValid())
+            return false;
+
+        for (final PetAIMode other : PetAIMode.values())
+            ent.removeScoreboardTag(other.getMode());
+        ent.addScoreboardTag(mode.getMode());
+        aiMode = mode;
+
+        final Skill skillMM = skillName == null || skillName.isEmpty() ? null : Utils.getSkill(skillName);
+        if (skillMM != null) {
+            try {
+                skillMM.execute(new SkillMetadataImpl(SkillTriggers.CUSTOM, activeMob, activeMob.getEntity()));
+            } catch (final Exception ex) {
+                Debugger.send("§cCould not run the skill " + skillName + " of pet " + id + ": " + ex.getMessage());
+            }
+        } else {
+            Debugger.send("§cThe skill §6" + skillName + "§c doesn't exist in MythicMobs, pet " + id + " only had its mode changed.");
+        }
+
+        // The pet is restored in this mode after a restart
+        if (GlobalConfig.getInstance().isSpawnPetAfterServerRestart() && owner != null) {
+            final PlayerData pd = PlayerData.get(owner);
+            if (pd != null) {
+                final PetSkin activeSkin = getActiveSkin();
+                pd.removeLastActivePet(id);
+                pd.addLastActivePet(PlayerData.encodeActivePet(id, aiMode, activeSkin != null ? activeSkin.getPathId() : null));
+                pd.save();
+            }
+        }
+        PlacedPets.save(owner);
+        return true;
+    }
+
+    /**
      * Set the active mob of the pet instance
      * This will not synchronize with the pet's owner, so be extra careful with using this method
      * You'd rather use "changeActiveMobTo" instead
@@ -1000,6 +1286,7 @@ public class Pet {
         // And we setup the default pet parameters
         activeMob = mob;
         final Entity ent = mob.getEntity().getBukkitEntity();
+        entityId = ent.getUniqueId();
 
         // Put the Metadata on the pet that characterizes it so we can identify it later
         ent.setMetadata("AlmPet", new FixedMetadataValue(MCPets.getInstance(), this));
@@ -1040,6 +1327,12 @@ public class Pet {
                 if (p != null && p.isDead())
                     return;
 
+                // A sitting or wandering pet whose chunk is unloaded is still out, it's relinked when its chunk loads
+                if (aiMode != PetAIMode.FOLLOW && !removed && activeMob != null && activeMob.getEntity() != null
+                        && activeMob.getEntity().getBukkitEntity() != null
+                        && !activeMob.getEntity().getBukkitEntity().isValid())
+                    return;
+
                 if (!getInstance().isStillHere()) {
                     Debugger.send("§6[AiManager] : §cPet " + getId() + " is not here, so it gets despawned.");
                     getInstance().despawn(PetDespawnReason.AI_TRACK_DESPAWN);
@@ -1056,6 +1349,7 @@ public class Pet {
                 }
 
                 final Location petLoc = getInstance().getActiveMob().getEntity().getBukkitEntity().getLocation();
+                lastKnownLocation = petLoc;
 
                 if (aiMode.equals(PetAIMode.FOLLOW)) {
 
@@ -1165,6 +1459,7 @@ public class Pet {
         // Bring back the wander home stored on the entity, else the pet's current spot becomes its home
         if (aiMode == PetAIMode.WANDER && !loadWanderHome(ent))
             setWanderHome(ent.getLocation(), GlobalConfig.getInstance().getWanderRange());
+        PlacedPets.save(owner);
         return replaced;
     }
 
@@ -1246,8 +1541,15 @@ public class Pet {
 
             MCPets.getModeler().dismountAll(activeMob.getEntity().getUniqueId());
 
+            // A pet whose chunk isn't loaded (e.g. sitting far away) can't be removed now:
+            // its entity is saved with the chunk and would come back when the chunk loads, so it's removed then
+            final Entity petEntity = activeMob.getEntity() != null ? activeMob.getEntity().getBukkitEntity() : null;
+            if (reason != PetDespawnReason.DEATH && petEntity != null && !petEntity.isValid()) {
+                Debugger.send("§6Pet §7" + id + "§6 is in an unloaded chunk, it will be removed when its chunk loads.");
+                RevokedPets.add(petEntity.getUniqueId());
+            }
             // If it's not a death, we don't let the death animation happen
-            if (reason != PetDespawnReason.DEATH) {
+            else if (reason != PetDespawnReason.DEATH) {
                 // Do we have a despawn skill to trigger or a skin swap?
                 final Skill despawnSkillMM = Utils.getSkill(despawnSkill);
                 if (despawnSkillMM != null
@@ -1276,33 +1578,47 @@ public class Pet {
 
             Pet.removeActivePet(owner, this);
             Debugger.send("§b[DESPAWN] Removed pet " + id + " from active list");
-            if (GlobalConfig.getInstance().isSpawnPetAfterServerRestart()) {
-                if (reason == PetDespawnReason.REVOKE || reason == PetDespawnReason.DISMOUNT || reason == PetDespawnReason.UNKNOWN) {
-                    final PlayerData pd = PlayerData.get(owner);
-                    if (pd != null) {
-                        pd.setLastActivePets(new ArrayList<>());
-                        pd.save();
-                    }
-                }
-            }
+            updateLastActivePets(reason);
             syncActivePetsToDb(reason);
+            entityId = null;
+            if (aiMode != PetAIMode.FOLLOW)
+                PlacedPets.save(owner);
             return true;
         }
 
         Debugger.send("§cActive mob was not found, so it could not be despawned.");
+        // A sitting or wandering pet restored after a restart whose chunk hasn't loaded yet (see PlacedPets)
+        if (entityId != null && reason != PetDespawnReason.DEATH) {
+            Debugger.send("§6Pet §7" + id + "§6 was never loaded, it will be removed when its chunk loads.");
+            RevokedPets.add(entityId);
+        }
+        entityId = null;
         Pet.removeActivePet(owner, this);
         Debugger.send("§b[DESPAWN] Removed pet " + id + " from active list (no active mob)");
-        if (GlobalConfig.getInstance().isSpawnPetAfterServerRestart()) {
-            if (reason == PetDespawnReason.REVOKE || reason == PetDespawnReason.DISMOUNT || reason == PetDespawnReason.UNKNOWN) {
-                final PlayerData pd = PlayerData.get(owner);
-                if (pd != null) {
-                    pd.setLastActivePets(new ArrayList<>());
-                    pd.save();
-                }
-            }
-        }
+        updateLastActivePets(reason);
         syncActivePetsToDb(reason);
+        if (aiMode != PetAIMode.FOLLOW)
+            PlacedPets.save(owner);
         return false;
+    }
+
+    /**
+     * Keep the pets restored after a restart in line with this despawn
+     */
+    private void updateLastActivePets(final PetDespawnReason reason) {
+        if (!GlobalConfig.getInstance().isSpawnPetAfterServerRestart() || owner == null)
+            return;
+        final PlayerData pd = PlayerData.get(owner);
+        if (pd == null)
+            return;
+        if (reason == PetDespawnReason.REVOKE || reason == PetDespawnReason.DISMOUNT || reason == PetDespawnReason.UNKNOWN) {
+            pd.setLastActivePets(new ArrayList<>());
+            pd.save();
+        } else if (reason == PetDespawnReason.REPLACED) {
+            // Replaced by a new pet, so only this one is forgotten
+            pd.removeLastActivePet(id);
+            pd.save();
+        }
     }
 
     /**

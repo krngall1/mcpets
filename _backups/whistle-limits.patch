@@ -1,0 +1,157 @@
+--- a/src/main/java/fr/nocsy/mcpets/data/Pet.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Pet.java
+@@ -1042,6 +1042,33 @@
+     }
+ 
+     /**
++     * Say whether this pet can't switch to the given mode because the owner already has
++     * MaxFollowingPets following pets, or MaxNonFollowingPets sitting or wandering pets (0 means no limit).
++     * Used by the whistle through the petModeLimitReached condition
++     */
++    public boolean isModeLimitReached(final PetAIMode mode) {
++        if (owner == null || isMount())
++            return false;
++        final boolean toFollow = mode == PetAIMode.FOLLOW;
++        final boolean isFollowing = aiMode == null || aiMode == PetAIMode.FOLLOW;
++        // Sit <-> wander doesn't change the counts, and neither does staying in follow
++        if (toFollow == isFollowing)
++            return false;
++
++        final int max = toFollow ? GlobalConfig.getInstance().getMaxFollowingPets()
++                : GlobalConfig.getInstance().getMaxNonFollowingPets();
++        if (max <= 0)
++            return false;
++
++        final long count = Pet.getActivePetsForOwner(owner).stream()
++                .filter(p -> p != this && !p.isMount())
++                .filter(p -> toFollow ? p.getAiMode() == PetAIMode.FOLLOW
++                        : p.getAiMode() == PetAIMode.SIT || p.getAiMode() == PetAIMode.WANDER)
++                .count();
++        return count >= max;
++    }
++
++    /**
+      * Sit this pet down where it is, like the whistle does.
+      * Java sets the mode and the tags, the SitSkill (config.yml) does the rest (speed, AI goals).
+      * Returns false if the pet isn't in the world
+--- a/src/main/java/fr/nocsy/mcpets/data/config/Language.java
++++ b/src/main/java/fr/nocsy/mcpets/data/config/Language.java
+@@ -146,6 +146,8 @@
+     PET_STATS_MAX_LEVEL("§7Maximum level reached."),
+     PET_ALREADY_ACTIVE("§cThis pet is already out somewhere. Revoke it before summoning it again."),
+     PET_SAT_FOR_NEW_ONE("§7Your oldest following pet sat down to make room for the new one."),
++    MAX_FOLLOWING_PETS_REACHED("§cYou can have at most %max% following pets."),
++    MAX_NON_FOLLOWING_PETS_REACHED("§cYou can have at most %max% sitting or wandering pets."),
+     MAX_ACTIVE_PETS_REACHED("§cYou have reached the maximum number of active pets!"),
+     PET_REPLACED_BY_NEW("§e%oldpet% has been replaced by %newpet%!"),
+     DEBUGGER_JOINING("§aDebugger is enabled. You are now listening to it."),
+--- /dev/null
++++ b/src/main/java/fr/nocsy/mcpets/mythicmobs/conditions/PetModeLimitCondition.java
+@@ -0,0 +1,43 @@
++package fr.nocsy.mcpets.mythicmobs.conditions;
++
++import fr.nocsy.mcpets.data.Pet;
++import fr.nocsy.mcpets.data.PetAIMode;
++
++import io.lumine.mythic.core.skills.SkillCondition;
++import io.lumine.mythic.api.adapters.AbstractEntity;
++import io.lumine.mythic.api.config.MythicLineConfig;
++import io.lumine.mythic.core.utils.annotations.MythicField;
++import io.lumine.mythic.api.skills.conditions.IEntityCondition;
++import io.lumine.mythic.core.utils.annotations.MythicCondition;
++import io.lumine.mythic.bukkit.events.MythicConditionLoadEvent;
++
++@MythicCondition(
++        author = "Kieran",
++        name = "petModeLimitReached",
++        description = "True if the pet can't switch to the given mode because the owner is at MaxFollowingPets or MaxNonFollowingPets"
++)
++public class PetModeLimitCondition extends SkillCondition implements IEntityCondition {
++
++    @MythicField(
++            name = "mode",
++            aliases = {"m"},
++            description = "The mode the pet would switch to (FOLLOW, SIT or WANDER)"
++    )
++    private final PetAIMode mode;
++
++    public PetModeLimitCondition(MythicConditionLoadEvent event) {
++        super(event.getConfig().getLine());
++
++        MythicLineConfig mlc = event.getConfig();
++
++        mode = PetAIMode.valueOf(mlc.getString(new String[]{"mode", "m"}, "follow").toUpperCase());
++    }
++
++    @Override
++    public boolean check(AbstractEntity target) {
++        Pet pet = Pet.getFromEntity(target.getBukkitEntity());
++
++        return pet != null && pet.isModeLimitReached(mode);
++    }
++
++}
+--- /dev/null
++++ b/src/main/java/fr/nocsy/mcpets/mythicmobs/mechanics/PetLimitMessageMechanic.java
+@@ -0,0 +1,61 @@
++package fr.nocsy.mcpets.mythicmobs.mechanics;
++
++import fr.nocsy.mcpets.data.Pet;
++import fr.nocsy.mcpets.data.PetAIMode;
++import fr.nocsy.mcpets.data.config.FormatArg;
++import fr.nocsy.mcpets.data.config.GlobalConfig;
++import fr.nocsy.mcpets.data.config.Language;
++import org.bukkit.Bukkit;
++import org.bukkit.entity.Player;
++
++import io.lumine.mythic.bukkit.BukkitAdapter;
++import io.lumine.mythic.api.skills.SkillResult;
++import io.lumine.mythic.api.skills.SkillMetadata;
++import io.lumine.mythic.core.skills.SkillMechanic;
++import io.lumine.mythic.api.adapters.AbstractEntity;
++import io.lumine.mythic.api.config.MythicLineConfig;
++import io.lumine.mythic.api.skills.ITargetedEntitySkill;
++import io.lumine.mythic.core.utils.annotations.MythicMechanic;
++import io.lumine.mythic.bukkit.events.MythicMechanicLoadEvent;
++
++/**
++ * Tells the pet's owner how many pets they can have in the given mode (language.yml), e.g. when the whistle hits a limit
++ */
++@MythicMechanic(
++        name = "petLimitMessage"
++)
++public class PetLimitMessageMechanic extends SkillMechanic implements ITargetedEntitySkill {
++
++    private final PetAIMode mode;
++
++    public PetLimitMessageMechanic(MythicMechanicLoadEvent event) {
++        super(event.getContainer().getManager(), event.getContainer().getFile());
++
++        MythicLineConfig config = event.getConfig();
++
++        mode = PetAIMode.valueOf(config.getString(new String[]{"mode", "m"}, "follow").toUpperCase());
++    }
++
++    @Override
++    public SkillResult castAtEntity(SkillMetadata data, AbstractEntity target) {
++        Pet pet = Pet.getFromEntity(BukkitAdapter.adapt(target));
++        if (pet == null || pet.getOwner() == null) {
++            return SkillResult.CONDITION_FAILED;
++        }
++
++        Player owner = Bukkit.getPlayer(pet.getOwner());
++        if (owner == null) {
++            return SkillResult.CONDITION_FAILED;
++        }
++
++        if (mode == PetAIMode.FOLLOW) {
++            Language.MAX_FOLLOWING_PETS_REACHED.sendMessageFormatted(owner,
++                    new FormatArg("%max%", String.valueOf(GlobalConfig.getInstance().getMaxFollowingPets())));
++        } else {
++            Language.MAX_NON_FOLLOWING_PETS_REACHED.sendMessageFormatted(owner,
++                    new FormatArg("%max%", String.valueOf(GlobalConfig.getInstance().getMaxNonFollowingPets())));
++        }
++        return SkillResult.SUCCESS;
++    }
++
++}

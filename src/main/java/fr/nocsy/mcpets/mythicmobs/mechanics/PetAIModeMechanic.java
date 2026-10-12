@@ -5,6 +5,7 @@ import fr.nocsy.mcpets.data.config.GlobalConfig;
 import org.bukkit.entity.Entity;
 
 import fr.nocsy.mcpets.data.Pet;
+import fr.nocsy.mcpets.data.PlacedPets;
 
 import io.lumine.mythic.bukkit.BukkitAdapter;
 import io.lumine.mythic.api.skills.SkillResult;
@@ -50,6 +51,8 @@ public class PetAIModeMechanic extends SkillMechanic implements ITargetedEntityS
         if (mode == PetAIMode.WANDER && !keepHome) {
             pet.setWanderHome(entity.getLocation(), range > 0 ? range : GlobalConfig.getInstance().getWanderRange());
         }
+        // Sitting and wandering pets are kept across restarts
+        PlacedPets.save(pet.getOwner());
 
         return SkillResult.SUCCESS;
     }

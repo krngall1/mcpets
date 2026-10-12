@@ -1,0 +1,11 @@
+--- a/src/main/java/fr/nocsy/mcpets/data/Pet.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Pet.java
+@@ -1138,6 +1138,8 @@
+         this.lastKnownLocation = location;
+         this.wanderCenter = center;
+         this.wanderRange = range;
++        // Only owned pets are placed, and copies start untamed, which hides their menu
++        this.tamingProgress = 1;
+         setRemoved(false);
+         setPetStats();
+     }

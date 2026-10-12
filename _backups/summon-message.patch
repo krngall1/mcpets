@@ -1,0 +1,57 @@
+--- a/src/main/java/fr/nocsy/mcpets/data/Pet.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Pet.java
+@@ -1101,6 +1101,20 @@
+     }
+ 
+     /**
++     * The pet's nickname if it has one, else the name of its menu icon
++     */
++    public Component getNameForMessages() {
++        if (currentName != null && !currentName.isEmpty()
++                && !currentName.equalsIgnoreCase(Language.TAG_TO_REMOVE_NAME.getMessage()))
++            return Utils.toComponent(currentName);
++        final Pet objectPet = Pet.getFromId(id);
++        final ItemStack petIcon = objectPet != null ? objectPet.getIcon() : icon;
++        if (petIcon != null && petIcon.hasItemMeta() && petIcon.getItemMeta().hasDisplayName())
++            return petIcon.getItemMeta().displayName();
++        return Component.text(id);
++    }
++
++    /**
+      * Switch a loaded pet to the given mode from Java, like the whistle does.
+      * Java sets the mode and the tags, the given MythicMobs skill (config.yml) does the rest (speed, AI goals).
+      * Returns false if the pet isn't loaded in the world
+--- a/src/main/java/fr/nocsy/mcpets/data/config/Language.java
++++ b/src/main/java/fr/nocsy/mcpets/data/config/Language.java
+@@ -26,6 +26,7 @@
+ 
+     SUMMON_ITEM_NAME("<green>Summon"),
+     SUMMON_ITEM_DESCRIPTION("<gold>Click to summon pet"),
++    PET_SUMMONED("<green>%pet% was summoned to you!"),
+     SUMMON_ITEM_NAME_FOLLOWING("<gray>Summon"),
+     SUMMON_ITEM_DESCRIPTION_FOLLOWING("<yellow>Pet is following you"),
+ 
+--- a/src/main/java/fr/nocsy/mcpets/listeners/PetInteractionMenuListener.java
++++ b/src/main/java/fr/nocsy/mcpets/listeners/PetInteractionMenuListener.java
+@@ -10,6 +10,7 @@
+ import org.jetbrains.annotations.NotNull;
+ 
+ import org.bukkit.entity.Player;
++import net.kyori.adventure.text.TextReplacementConfig;
+ import org.bukkit.event.Listener;
+ import org.bukkit.event.EventHandler;
+ import org.bukkit.event.EventPriority;
+@@ -78,7 +79,12 @@
+                     new FormatArg("%max%", String.valueOf(PetLimits.getMaxFollowingPets(pet.getOwner()))));
+             return;
+         }
+-        pet.summonToOwner();
++        if (pet.summonToOwner() && !Language.PET_SUMMONED.getMessage().isEmpty()) {
++            p.sendMessage(Language.PET_SUMMONED.getComponentWithPrefix().replaceText(TextReplacementConfig.builder()
++                    .matchLiteral("%pet%")
++                    .replacement(pet.getNameForMessages())
++                    .build()));
++        }
+         p.closeInventory();
+     }
+ 

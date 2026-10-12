@@ -154,6 +154,9 @@ public class PetListener implements Listener {
         Player p = e.getPlayer();
         UUID uuid = p.getUniqueId();
 
+        // Where the sitting and wandering pets are, so they're active again after a restart
+        PlacedPets.save(uuid);
+
         List<String> activePetIds = new ArrayList<>();
         Map<String, String> activeSkinIds = new HashMap<>();
         PlayerData.get(uuid).setLastActivePets(new ArrayList<>());
@@ -219,6 +222,10 @@ public class PetListener implements Listener {
             if (GlobalConfig.getInstance().isDatabaseSupport()) {
                 PlayerData.reloadAll(uuid);
             }
+
+            // Sitting and wandering pets first, so they count towards the limits of the pets spawned below
+            if (p.isOnline())
+                PlacedPets.restore(p);
 
             if (GlobalConfig.getInstance().isVelocityEnabled()
                     && GlobalConfig.getInstance().isDatabaseSupport()) {
@@ -406,9 +413,26 @@ public class PetListener implements Listener {
                 }
 
                 final ActiveMob activeMob = found.get();
+                // A pet restored after a restart (see PlacedPets) is waiting for this entity
+                Pet linkedPet = Pet.getFromEntity(entity);
+                if (linkedPet == null)
+                    linkedPet = Pet.getPlacedPet(uuid);
+                final Pet pet = linkedPet;
+
+                // The pet was revoked (e.g. replaced by a new pet) while its chunk wasn't loaded, so it's removed now
+                // instead of coming back and taking the new pet's place
+                if (RevokedPets.consume(uuid) || (pet != null && pet.isRemoved())) {
+                    Debugger.send("§7Removing pet entity " + uuid + ", it was revoked while its chunk wasn't loaded");
+                    MCPets.getModeler().removeModel(uuid);
+                    activeMob.remove();
+                    entity.remove();
+                    loadingPets.remove(uuid);
+                    cancel();
+                    return;
+                }
+
                 // The pet usually is still linked (metadata is kept by uuid) but drives the old mob,
                 // so it's pointed at the reloaded one
-                final Pet pet = Pet.getFromEntity(entity);
                 if (pet != null && pet.getOwner() != null && pet.getActiveMob() != activeMob) {
                     Debugger.send("§7Relinking pet " + pet.getId() + " to its reloaded entity " + uuid);
                     pet.relink(activeMob, pet.getOwner(), pet.getAiMode());

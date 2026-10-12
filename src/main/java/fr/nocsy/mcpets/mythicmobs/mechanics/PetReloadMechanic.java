@@ -3,6 +3,7 @@ package fr.nocsy.mcpets.mythicmobs.mechanics;
 import fr.nocsy.mcpets.MCPets;
 import fr.nocsy.mcpets.data.Pet;
 import fr.nocsy.mcpets.data.PetAIMode;
+import fr.nocsy.mcpets.data.RevokedPets;
 import fr.nocsy.mcpets.data.config.Language;
 import io.lumine.mythic.api.adapters.AbstractEntity;
 import io.lumine.mythic.api.config.MythicLineConfig;
@@ -47,12 +48,20 @@ public class PetReloadMechanic extends SkillMechanic implements ITargetedEntityS
 
         Entity entity = BukkitAdapter.adapt(target);
 
+        // The pet was revoked while its chunk wasn't loaded (see RevokedPets), so it isn't brought back
+        if (RevokedPets.consume(entity.getUniqueId())) {
+            MCPets.getModeler().removeModel(entity.getUniqueId());
+            MCPets.getMythicMobs().getMobManager().getActiveMob(entity.getUniqueId()).ifPresent(ActiveMob::remove);
+            entity.remove();
+            return SkillResult.CONDITION_FAILED;
+        }
+
         Pet pet = Pet.getFromEntity(entity);
         if (pet != null) {
             new BukkitRunnable() {
                 @Override
                 public void run() {
-                    pet.setNameTag(pet.getCurrentName(), true);
+                    refreshNameTag(pet);
                 }
             }.runTaskLater(MCPets.getInstance(), 10L);
             return SkillResult.SUCCESS;
@@ -107,11 +116,20 @@ public class PetReloadMechanic extends SkillMechanic implements ITargetedEntityS
         new BukkitRunnable() {
             @Override
             public void run() {
-                relinkedPet.setNameTag(relinkedPet.getCurrentName(), true);
+                refreshNameTag(relinkedPet);
             }
         }.runTaskLater(MCPets.getInstance(), 10L);
 
         return SkillResult.SUCCESS;
+    }
+
+    /**
+     * Re-apply the pet's name tag, hidden when the pet has no custom name
+     * ("None" is MCPets' placeholder for "no name", the same check setDisplayName does)
+     */
+    private static void refreshNameTag(final Pet pet) {
+        final String name = pet.getCurrentName();
+        pet.setNameTag(name, name != null && !name.equalsIgnoreCase(Language.TAG_TO_REMOVE_NAME.getMessage()));
     }
 
     private static UUID resolveOwner(final Entity entity, final String fallback) {

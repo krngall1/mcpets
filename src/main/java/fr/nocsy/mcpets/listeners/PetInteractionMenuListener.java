@@ -10,6 +10,7 @@ import lombok.Getter;
 import org.jetbrains.annotations.NotNull;
 
 import org.bukkit.entity.Player;
+import net.kyori.adventure.text.TextReplacementConfig;
 import org.bukkit.event.Listener;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -25,6 +26,8 @@ import fr.nocsy.mcpets.PPermission;
 import fr.nocsy.mcpets.utils.Utils;
 import fr.nocsy.mcpets.utils.PDCTag;
 import fr.nocsy.mcpets.data.PetSkin;
+import fr.nocsy.mcpets.data.PetAIMode;
+import fr.nocsy.mcpets.data.PetLimits;
 import fr.nocsy.mcpets.data.config.Language;
 import fr.nocsy.mcpets.data.PetDespawnReason;
 import fr.nocsy.mcpets.data.config.FormatArg;
@@ -67,6 +70,24 @@ public class PetInteractionMenuListener implements Listener {
         }.runTaskLater(MCPets.getInstance(), 2L);
     }
 
+    public static void summon(final Player p, @NotNull final Pet pet) {
+        // Already following, the button is greyed out
+        if (pet.getAiMode() == PetAIMode.FOLLOW)
+            return;
+        if (pet.isModeLimitReached(PetAIMode.FOLLOW)) {
+            Language.MAX_FOLLOWING_PETS_REACHED.sendMessageFormatted(p,
+                    new FormatArg("%max%", String.valueOf(PetLimits.getMaxFollowingPets(pet.getOwner()))));
+            return;
+        }
+        if (pet.summonToOwner() && !Language.PET_SUMMONED.getMessage().isEmpty()) {
+            p.sendMessage(Language.PET_SUMMONED.getComponentWithPrefix().replaceText(TextReplacementConfig.builder()
+                    .matchLiteral("%pet%")
+                    .replacement(pet.getNameForMessages())
+                    .build()));
+        }
+        p.closeInventory();
+    }
+
     public static void revoke(final Player p, @NotNull final Pet pet) {
         pet.despawn(PetDespawnReason.REVOKE);
         Language.REVOKED.sendMessage(p);
@@ -93,15 +114,25 @@ public class PetInteractionMenuListener implements Listener {
             }
 
             final Pet pet = Optional.ofNullable(Pet.getFromLastInteractedWith(p)).orElse(Pet.getFromLastOpInteractedWith(p));
-            if (pet == null || !pet.isStillHere()) {
-                p.closeInventory();
-                Language.REVOKED_BEFORE_CHANGES.sendMessage(p);
+
+            // Checked before isStillHere(), the pet to summon may be in an unloaded chunk
+            final ItemStack clicked = e.getCurrentItem();
+            if (pet != null && !pet.isRemoved() && clicked != null && clicked.hasItemMeta()
+                    && Items.SUMMON_TAG.equals(PDCTag.get(clicked.getItemMeta()))) {
+                summon(p, pet);
                 return;
             }
 
-            if (e.getSlot() == 4) {
+            // Revoking also works on a pet whose chunk is unloaded
+            if (e.getSlot() == 4 && pet != null && !pet.isRemoved()) {
                 revoke(p, pet);
                 p.closeInventory();
+                return;
+            }
+
+            if (pet == null || !pet.isStillHere()) {
+                p.closeInventory();
+                Language.REVOKED_BEFORE_CHANGES.sendMessage(p);
                 return;
             }
 

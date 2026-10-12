@@ -1,0 +1,240 @@
+--- a/src/main/java/fr/nocsy/mcpets/data/Pet.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Pet.java
+@@ -1070,34 +1070,65 @@
+ 
+     /**
+      * Sit this pet down where it is, like the whistle does.
+-     * Java sets the mode and the tags, the SitSkill (config.yml) does the rest (speed, AI goals).
+-     * Returns false if the pet isn't in the world
++     * Returns false if the pet isn't loaded in the world
+      */
+     public boolean sitDown() {
++        return applyMode(PetAIMode.SIT, GlobalConfig.getInstance().getSitSkill());
++    }
++
++    /**
++     * Bring a sitting or wandering pet back to its owner in follow mode (summon button of the pet menu).
++     * A loaded pet just starts following, and the follow AI walks or teleports it to the owner.
++     * A pet in an unloaded chunk is spawned again at the owner, and the old entity is removed when its chunk loads
++     */
++    public boolean summonToOwner() {
++        if (aiMode == PetAIMode.FOLLOW || removed || owner == null)
++            return false;
++        final Player ownerPlayer = Bukkit.getPlayer(owner);
++        if (ownerPlayer == null)
++            return false;
++
++        if (applyMode(PetAIMode.FOLLOW, GlobalConfig.getInstance().getFollowSkill()))
++            return true;
++
++        // Not loaded: despawn() remembers the old entity in RevokedPets, then a following copy spawns at the owner
++        Debugger.send("§7Pet " + id + " is in an unloaded chunk, spawning it again at its owner.");
++        despawn(PetDespawnReason.TELEPORT);
++        aiMode = PetAIMode.FOLLOW;
++        wanderCenter = null;
++        spawn(ownerPlayer, ownerPlayer.getLocation());
++        return true;
++    }
++
++    /**
++     * Switch a loaded pet to the given mode from Java, like the whistle does.
++     * Java sets the mode and the tags, the given MythicMobs skill (config.yml) does the rest (speed, AI goals).
++     * Returns false if the pet isn't loaded in the world
++     */
++    private boolean applyMode(final PetAIMode mode, final String skillName) {
+         if (!isStillHere())
+             return false;
+         final Entity ent = activeMob.getEntity().getBukkitEntity();
+         if (!ent.isValid())
+             return false;
+ 
+-        ent.removeScoreboardTag(PetAIMode.FOLLOW.getMode());
+-        ent.removeScoreboardTag(PetAIMode.WANDER.getMode());
+-        ent.addScoreboardTag(PetAIMode.SIT.getMode());
+-        aiMode = PetAIMode.SIT;
+-
+-        final String sitSkillName = GlobalConfig.getInstance().getSitSkill();
+-        final Skill sitSkillMM = sitSkillName == null || sitSkillName.isEmpty() ? null : Utils.getSkill(sitSkillName);
+-        if (sitSkillMM != null) {
++        for (final PetAIMode other : PetAIMode.values())
++            ent.removeScoreboardTag(other.getMode());
++        ent.addScoreboardTag(mode.getMode());
++        aiMode = mode;
++
++        final Skill skillMM = skillName == null || skillName.isEmpty() ? null : Utils.getSkill(skillName);
++        if (skillMM != null) {
+             try {
+-                sitSkillMM.execute(new SkillMetadataImpl(SkillTriggers.CUSTOM, activeMob, activeMob.getEntity()));
++                skillMM.execute(new SkillMetadataImpl(SkillTriggers.CUSTOM, activeMob, activeMob.getEntity()));
+             } catch (final Exception ex) {
+-                Debugger.send("§cCould not run the sit skill " + sitSkillName + " of pet " + id + ": " + ex.getMessage());
++                Debugger.send("§cCould not run the skill " + skillName + " of pet " + id + ": " + ex.getMessage());
+             }
+         } else {
+-            Debugger.send("§cThe SitSkill §6" + sitSkillName + "§c doesn't exist in MythicMobs, pet " + id + " only had its mode changed.");
++            Debugger.send("§cThe skill §6" + skillName + "§c doesn't exist in MythicMobs, pet " + id + " only had its mode changed.");
+         }
+ 
+-        // The pet is restored sitting after a restart
++        // The pet is restored in this mode after a restart
+         if (GlobalConfig.getInstance().isSpawnPetAfterServerRestart() && owner != null) {
+             final PlayerData pd = PlayerData.get(owner);
+             if (pd != null) {
+--- a/src/main/java/fr/nocsy/mcpets/data/Items.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Items.java
+@@ -84,6 +84,21 @@
+         prepareItem();
+     }
+ 
++    public static final String SUMMON_TAG = "MCPetsMenu;summon";
++
++    /**
++     * Summon button of the pet menu, greyed out when the pet is already following
++     */
++    public static ItemStack summon(final boolean active) {
++        final ItemStack it = new ItemStack(Material.BONE);
++        final ItemMeta meta = it.getItemMeta();
++        meta.displayName((active ? Language.SUMMON_ITEM_NAME : Language.SUMMON_ITEM_NAME_FOLLOWING).getComponent());
++        meta.lore(Utils.toComponents((active ? Language.SUMMON_ITEM_DESCRIPTION : Language.SUMMON_ITEM_DESCRIPTION_FOLLOWING).getMessage()));
++        PDCTag.set(meta, SUMMON_TAG);
++        it.setItemMeta(meta);
++        return it;
++    }
++
+     private void prepareItem() {
+         ItemMeta meta = item.getItemMeta();
+         PDCTag.set(meta, getLocalizedName());
+--- a/src/main/java/fr/nocsy/mcpets/data/config/Language.java
++++ b/src/main/java/fr/nocsy/mcpets/data/config/Language.java
+@@ -24,6 +24,11 @@
+     BACK_TO_PETMENU_ITEM_NAME("§cBack to menu"),
+     BACK_TO_PETMENU_ITEM_DESCRIPTION("§7Click to get back to the menu"),
+ 
++    SUMMON_ITEM_NAME("<green>Summon"),
++    SUMMON_ITEM_DESCRIPTION("<gold>Click to summon pet"),
++    SUMMON_ITEM_NAME_FOLLOWING("<gray>Summon"),
++    SUMMON_ITEM_DESCRIPTION_FOLLOWING("<yellow>Pet is following you"),
++
+     INVENTORY_ITEM_NAME("§6Inventory"),
+     INVENTORY_ITEM_DESCRIPTION("§7Click to open the pet's inventory"),
+ 
+--- a/src/main/java/fr/nocsy/mcpets/data/config/GlobalConfig.java
++++ b/src/main/java/fr/nocsy/mcpets/data/config/GlobalConfig.java
+@@ -62,6 +62,8 @@
+     @Getter
+     private String sitSkill;
+     @Getter
++    private String followSkill;
++    @Getter
+     private int maxActiveMounts;
+     @Getter
+     private boolean activateBackMenuIcon;
+@@ -245,6 +247,9 @@
+         // MythicMobs skill run on a following pet that MCPets sits down to make room for a new one
+         if (getConfig().get("SitSkill") == null)
+             getConfig().set("SitSkill", "pet_force_sit");
++        // MythicMobs skill run on a sitting or wandering pet summoned back from the pet menu
++        if (getConfig().get("FollowSkill") == null)
++            getConfig().set("FollowSkill", "pet_force_follow");
+         if (getConfig().get("MaxActiveMounts") == null)
+             getConfig().set("MaxActiveMounts", 1);
+ 
+@@ -334,6 +339,7 @@
+         maxFollowingPets = getConfig().getInt("MaxFollowingPets");
+         maxNonFollowingPets = getConfig().getInt("MaxNonFollowingPets");
+         sitSkill = getConfig().getString("SitSkill");
++        followSkill = getConfig().getString("FollowSkill");
+         maxActiveMounts = getConfig().getInt("MaxActiveMounts");
+     }
+ 
+--- a/src/main/java/fr/nocsy/mcpets/data/inventories/PetInteractionMenu.java
++++ b/src/main/java/fr/nocsy/mcpets/data/inventories/PetInteractionMenu.java
+@@ -11,6 +11,7 @@
+ 
+ import fr.nocsy.mcpets.data.Pet;
+ import fr.nocsy.mcpets.data.Items;
++import fr.nocsy.mcpets.data.PetAIMode;
+ import fr.nocsy.mcpets.data.config.Language;
+ import fr.nocsy.mcpets.data.config.GlobalConfig;
+ 
+@@ -37,8 +38,10 @@
+             inventory.setItem(2, Items.SKINS.getItem());
+         if (GlobalConfig.getInstance().isNameable())
+             inventory.setItem(3, Items.RENAME.getItem());
++        // Slot 5 is the summon button, so the mount button moved to slot 8
++        inventory.setItem(5, Items.summon(pet.getAiMode() != PetAIMode.FOLLOW));
+         if (GlobalConfig.getInstance().isMountable() && pet.isMountable())
+-            inventory.setItem(5, Items.MOUNT.getItem());
++            inventory.setItem(8, Items.MOUNT.getItem());
+         if (!pet.getSignals().isEmpty() && pet.isEnableSignalStickFromMenu())
+             inventory.setItem(6, pet.getSignalStick());
+         if (pet.getInventorySize() > 0)
+--- a/src/main/java/fr/nocsy/mcpets/listeners/PetInteractionMenuListener.java
++++ b/src/main/java/fr/nocsy/mcpets/listeners/PetInteractionMenuListener.java
+@@ -25,6 +25,8 @@
+ import fr.nocsy.mcpets.utils.Utils;
+ import fr.nocsy.mcpets.utils.PDCTag;
+ import fr.nocsy.mcpets.data.PetSkin;
++import fr.nocsy.mcpets.data.PetAIMode;
++import fr.nocsy.mcpets.data.PetLimits;
+ import fr.nocsy.mcpets.data.config.Language;
+ import fr.nocsy.mcpets.data.PetDespawnReason;
+ import fr.nocsy.mcpets.data.config.FormatArg;
+@@ -67,6 +69,19 @@
+         }.runTaskLater(MCPets.getInstance(), 2L);
+     }
+ 
++    public static void summon(final Player p, @NotNull final Pet pet) {
++        // Already following, the button is greyed out
++        if (pet.getAiMode() == PetAIMode.FOLLOW)
++            return;
++        if (pet.isModeLimitReached(PetAIMode.FOLLOW)) {
++            Language.MAX_FOLLOWING_PETS_REACHED.sendMessageFormatted(p,
++                    new FormatArg("%max%", String.valueOf(PetLimits.getMaxFollowingPets(pet.getOwner()))));
++            return;
++        }
++        pet.summonToOwner();
++        p.closeInventory();
++    }
++
+     public static void revoke(final Player p, @NotNull final Pet pet) {
+         pet.despawn(PetDespawnReason.REVOKE);
+         Language.REVOKED.sendMessage(p);
+@@ -93,6 +108,15 @@
+             }
+ 
+             final Pet pet = Optional.ofNullable(Pet.getFromLastInteractedWith(p)).orElse(Pet.getFromLastOpInteractedWith(p));
++
++            // Checked before isStillHere(), the pet to summon may be in an unloaded chunk
++            final ItemStack clicked = e.getCurrentItem();
++            if (pet != null && !pet.isRemoved() && clicked != null && clicked.hasItemMeta()
++                    && Items.SUMMON_TAG.equals(PDCTag.get(clicked.getItemMeta()))) {
++                summon(p, pet);
++                return;
++            }
++
+             if (pet == null || !pet.isStillHere()) {
+                 p.closeInventory();
+                 Language.REVOKED_BEFORE_CHANGES.sendMessage(p);
+--- a/src/main/java/fr/nocsy/mcpets/commands/mcpets/ArgumentMenu.java
++++ b/src/main/java/fr/nocsy/mcpets/commands/mcpets/ArgumentMenu.java
+@@ -3,6 +3,7 @@
+ import fr.nocsy.mcpets.commands.AArgument;
+ import fr.nocsy.mcpets.data.Items;
+ import fr.nocsy.mcpets.data.Pet;
++import fr.nocsy.mcpets.data.PetAIMode;
+ import fr.nocsy.mcpets.data.config.FormatArg;
+ import fr.nocsy.mcpets.data.config.GlobalConfig;
+ import fr.nocsy.mcpets.data.config.Language;
+@@ -84,7 +85,11 @@
+         if (GlobalConfig.getInstance().isNameable())
+             inventory.setItem(3, Items.RENAME.getItem());
+         inventory.setItem(4, pet.buildItem(Items.petInfo(pet), true));
++        if (!isMount)
++            inventory.setItem(5, Items.summon(pet.getAiMode() != PetAIMode.FOLLOW));
+ 
++        // The menu's buttons act on the last pet the player interacted with
++        pet.setLastInteractedWith(p);
+         p.openInventory(inventory);
+     }
+ }

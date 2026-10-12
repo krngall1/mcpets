@@ -6,6 +6,7 @@ import fr.nocsy.mcpets.data.inventories.PetInventory;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.UUID;
@@ -73,6 +74,13 @@ public class PlayerData {
 
     public void addLastActivePet(String pet) {
         if (!lastActivePets.contains(pet)) lastActivePets.add(pet);
+    }
+
+    public void removeLastActivePet(String petId) {
+        if (lastActivePets == null || petId == null) return;
+        // Copied first, the list loaded from the database can't be changed
+        lastActivePets = new ArrayList<>(lastActivePets);
+        lastActivePets.removeIf(stored -> petId.equals(decodeActivePetId(stored)));
     }
 
     public static PlayerData getEmpty(UUID owner) {

@@ -68,13 +68,14 @@ public class Category {
 
         p.closeInventory();
 
-        final List<Pet> playerPets = new ArrayList<>();
+        List<Pet> playerPets = new ArrayList<>();
         for (Pet pet : pets) {
             if (!pet.has(p)) continue;
             playerPets.add(pet);
         }
         
         if (playerPets.isEmpty() && page > 0) return false;
+        playerPets = Pet.activeFirst(playerPets, p.getUniqueId());
         
         PaginationConfig config = MenuPaginationHelper.calculatePagination(page, playerPets.size());
 
@@ -95,7 +96,7 @@ public class Category {
 
         int slot = config.startSlot();
         for (Pet pet : petsForPage) {
-            inventory.setItem(slot++, pet.buildItem(pet.getIcon(), true));
+            inventory.setItem(slot++, pet.buildMenuIcon(p.getUniqueId()));
         }
 
         p.openInventory(inventory);

@@ -84,6 +84,21 @@ public enum Items {
         prepareItem();
     }
 
+    public static final String SUMMON_TAG = "MCPetsMenu;summon";
+
+    /**
+     * Summon button of the pet menu, greyed out when the pet is already following
+     */
+    public static ItemStack summon(final boolean active) {
+        final ItemStack it = new ItemStack(Material.BONE);
+        final ItemMeta meta = it.getItemMeta();
+        meta.displayName((active ? Language.SUMMON_ITEM_NAME : Language.SUMMON_ITEM_NAME_FOLLOWING).getComponent());
+        meta.lore(Utils.toComponents((active ? Language.SUMMON_ITEM_DESCRIPTION : Language.SUMMON_ITEM_DESCRIPTION_FOLLOWING).getMessage()));
+        PDCTag.set(meta, SUMMON_TAG);
+        it.setItemMeta(meta);
+        return it;
+    }
+
     private void prepareItem() {
         ItemMeta meta = item.getItemMeta();
         PDCTag.set(meta, getLocalizedName());
@@ -324,9 +339,16 @@ public enum Items {
         if (!meta.hasLore()) lore = new ArrayList<>();
         else lore = new ArrayList<>(meta.lore());
 
+        // The mode line goes under the nickname
+        final Component modeLore = pet.getModeLore();
         if (pet.getCurrentName() != null && GlobalConfig.getInstance().isNameable()) {
             lore.add(Component.empty());
             lore.add(Language.NICKNAME.getComponentFormatted(new FormatArg("%nickname%", pet.getCurrentName())));
+            if (modeLore != null) lore.add(modeLore);
+            lore.add(Component.empty());
+        } else if (modeLore != null) {
+            lore.add(Component.empty());
+            lore.add(modeLore);
             lore.add(Component.empty());
         }
 

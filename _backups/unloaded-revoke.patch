@@ -1,0 +1,283 @@
+--- a/src/main/java/fr/nocsy/mcpets/data/Pet.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Pet.java
+@@ -61,6 +61,7 @@
+ 
+     //---------------------------------------------------------------------
+     public static final int BLOCKED = 2;
++    public static final int ALREADY_ACTIVE = 3;
+     public static final int MOB_SPAWN = 0;
+     public static final int DESPAWNED_PREVIOUS = 1;
+     public static final int OWNER_NULL = -1;
+@@ -670,8 +671,8 @@
+ 
+                 if (activePet.getId().equals(this.id)) {
+                     Debugger.send("§cPlayer already has this pet active: " + this.id);
+-                    // Don't spawn, just return blocked
+-                    return BLOCKED;
++                    // Don't spawn, the pet may be sitting or wandering somewhere else
++                    return ALREADY_ACTIVE;
+                 }
+             }
+             // Add to spawning set
+@@ -858,6 +859,9 @@
+                 case Pet.OWNER_NULL:
+                     Language.OWNER_NOT_FOUND.sendMessage(p);
+                     break;
++                case Pet.ALREADY_ACTIVE:
++                    Language.PET_ALREADY_ACTIVE.sendMessage(p);
++                    break;
+                 case Pet.MAX_ACTIVE_PETS_REACHED:
+                     Language.MAX_ACTIVE_PETS_REACHED.sendMessageFormatted(p,
+                             new FormatArg("%max%", String.valueOf(GlobalConfig.getInstance().getMaxActivePets())));
+@@ -1040,6 +1044,12 @@
+                 if (p != null && p.isDead())
+                     return;
+ 
++                // A sitting or wandering pet whose chunk is unloaded is still out, it's relinked when its chunk loads
++                if (aiMode != PetAIMode.FOLLOW && !removed && activeMob != null && activeMob.getEntity() != null
++                        && activeMob.getEntity().getBukkitEntity() != null
++                        && !activeMob.getEntity().getBukkitEntity().isValid())
++                    return;
++
+                 if (!getInstance().isStillHere()) {
+                     Debugger.send("§6[AiManager] : §cPet " + getId() + " is not here, so it gets despawned.");
+                     getInstance().despawn(PetDespawnReason.AI_TRACK_DESPAWN);
+@@ -1246,8 +1256,15 @@
+ 
+             MCPets.getModeler().dismountAll(activeMob.getEntity().getUniqueId());
+ 
++            // A pet whose chunk isn't loaded (e.g. sitting far away) can't be removed now:
++            // its entity is saved with the chunk and would come back when the chunk loads, so it's removed then
++            final Entity petEntity = activeMob.getEntity() != null ? activeMob.getEntity().getBukkitEntity() : null;
++            if (reason != PetDespawnReason.DEATH && petEntity != null && !petEntity.isValid()) {
++                Debugger.send("§6Pet §7" + id + "§6 is in an unloaded chunk, it will be removed when its chunk loads.");
++                RevokedPets.add(petEntity.getUniqueId());
++            }
+             // If it's not a death, we don't let the death animation happen
+-            if (reason != PetDespawnReason.DEATH) {
++            else if (reason != PetDespawnReason.DEATH) {
+                 // Do we have a despawn skill to trigger or a skin swap?
+                 final Skill despawnSkillMM = Utils.getSkill(despawnSkill);
+                 if (despawnSkillMM != null
+@@ -1276,15 +1293,7 @@
+ 
+             Pet.removeActivePet(owner, this);
+             Debugger.send("§b[DESPAWN] Removed pet " + id + " from active list");
+-            if (GlobalConfig.getInstance().isSpawnPetAfterServerRestart()) {
+-                if (reason == PetDespawnReason.REVOKE || reason == PetDespawnReason.DISMOUNT || reason == PetDespawnReason.UNKNOWN) {
+-                    final PlayerData pd = PlayerData.get(owner);
+-                    if (pd != null) {
+-                        pd.setLastActivePets(new ArrayList<>());
+-                        pd.save();
+-                    }
+-                }
+-            }
++            updateLastActivePets(reason);
+             syncActivePetsToDb(reason);
+             return true;
+         }
+@@ -1292,20 +1301,31 @@
+         Debugger.send("§cActive mob was not found, so it could not be despawned.");
+         Pet.removeActivePet(owner, this);
+         Debugger.send("§b[DESPAWN] Removed pet " + id + " from active list (no active mob)");
+-        if (GlobalConfig.getInstance().isSpawnPetAfterServerRestart()) {
+-            if (reason == PetDespawnReason.REVOKE || reason == PetDespawnReason.DISMOUNT || reason == PetDespawnReason.UNKNOWN) {
+-                final PlayerData pd = PlayerData.get(owner);
+-                if (pd != null) {
+-                    pd.setLastActivePets(new ArrayList<>());
+-                    pd.save();
+-                }
+-            }
+-        }
++        updateLastActivePets(reason);
+         syncActivePetsToDb(reason);
+         return false;
+     }
+ 
+     /**
++     * Keep the pets restored after a restart in line with this despawn
++     */
++    private void updateLastActivePets(final PetDespawnReason reason) {
++        if (!GlobalConfig.getInstance().isSpawnPetAfterServerRestart() || owner == null)
++            return;
++        final PlayerData pd = PlayerData.get(owner);
++        if (pd == null)
++            return;
++        if (reason == PetDespawnReason.REVOKE || reason == PetDespawnReason.DISMOUNT || reason == PetDespawnReason.UNKNOWN) {
++            pd.setLastActivePets(new ArrayList<>());
++            pd.save();
++        } else if (reason == PetDespawnReason.REPLACED) {
++            // Replaced by a new pet, so only this one is forgotten
++            pd.removeLastActivePet(id);
++            pd.save();
++        }
++    }
++
++    /**
+      * Sync active pets to the Velocity DB after a despawn.
+      * Skips DISCONNECTION (handled by PetListener) and TELEPORT (pet will re-spawn).
+      */
+--- a/src/main/java/fr/nocsy/mcpets/listeners/PetListener.java
++++ b/src/main/java/fr/nocsy/mcpets/listeners/PetListener.java
+@@ -406,9 +406,22 @@
+                 }
+ 
+                 final ActiveMob activeMob = found.get();
++                final Pet pet = Pet.getFromEntity(entity);
++
++                // The pet was revoked (e.g. replaced by a new pet) while its chunk wasn't loaded, so it's removed now
++                // instead of coming back and taking the new pet's place
++                if (RevokedPets.consume(uuid) || (pet != null && pet.isRemoved())) {
++                    Debugger.send("§7Removing pet entity " + uuid + ", it was revoked while its chunk wasn't loaded");
++                    MCPets.getModeler().removeModel(uuid);
++                    activeMob.remove();
++                    entity.remove();
++                    loadingPets.remove(uuid);
++                    cancel();
++                    return;
++                }
++
+                 // The pet usually is still linked (metadata is kept by uuid) but drives the old mob,
+                 // so it's pointed at the reloaded one
+-                final Pet pet = Pet.getFromEntity(entity);
+                 if (pet != null && pet.getOwner() != null && pet.getActiveMob() != activeMob) {
+                     Debugger.send("§7Relinking pet " + pet.getId() + " to its reloaded entity " + uuid);
+                     pet.relink(activeMob, pet.getOwner(), pet.getAiMode());
+--- a/src/main/java/fr/nocsy/mcpets/mythicmobs/mechanics/PetReloadMechanic.java
++++ b/src/main/java/fr/nocsy/mcpets/mythicmobs/mechanics/PetReloadMechanic.java
+@@ -3,6 +3,7 @@
+ import fr.nocsy.mcpets.MCPets;
+ import fr.nocsy.mcpets.data.Pet;
+ import fr.nocsy.mcpets.data.PetAIMode;
++import fr.nocsy.mcpets.data.RevokedPets;
+ import fr.nocsy.mcpets.data.config.Language;
+ import io.lumine.mythic.api.adapters.AbstractEntity;
+ import io.lumine.mythic.api.config.MythicLineConfig;
+@@ -47,6 +48,14 @@
+ 
+         Entity entity = BukkitAdapter.adapt(target);
+ 
++        // The pet was revoked while its chunk wasn't loaded (see RevokedPets), so it isn't brought back
++        if (RevokedPets.consume(entity.getUniqueId())) {
++            MCPets.getModeler().removeModel(entity.getUniqueId());
++            MCPets.getMythicMobs().getMobManager().getActiveMob(entity.getUniqueId()).ifPresent(ActiveMob::remove);
++            entity.remove();
++            return SkillResult.CONDITION_FAILED;
++        }
++
+         Pet pet = Pet.getFromEntity(entity);
+         if (pet != null) {
+             new BukkitRunnable() {
+--- a/src/main/java/fr/nocsy/mcpets/data/sql/PlayerData.java
++++ b/src/main/java/fr/nocsy/mcpets/data/sql/PlayerData.java
+@@ -6,6 +6,7 @@
+ import lombok.Getter;
+ import lombok.Setter;
+ 
++import java.util.ArrayList;
+ import java.util.HashMap;
+ import java.util.List;
+ import java.util.UUID;
+@@ -75,6 +76,13 @@
+         if (!lastActivePets.contains(pet)) lastActivePets.add(pet);
+     }
+ 
++    public void removeLastActivePet(String petId) {
++        if (lastActivePets == null || petId == null) return;
++        // Copied first, the list loaded from the database can't be changed
++        lastActivePets = new ArrayList<>(lastActivePets);
++        lastActivePets.removeIf(stored -> petId.equals(decodeActivePetId(stored)));
++    }
++
+     public static PlayerData getEmpty(UUID owner) {
+         PlayerData data = new PlayerData();
+         data.setUuid(owner);
+--- a/src/main/java/fr/nocsy/mcpets/data/config/Language.java
++++ b/src/main/java/fr/nocsy/mcpets/data/config/Language.java
+@@ -144,6 +144,7 @@
+ 
+     PET_STATS_EVOLUTION_ALREADY_OWNED("§cEvolution already owned."),
+     PET_STATS_MAX_LEVEL("§7Maximum level reached."),
++    PET_ALREADY_ACTIVE("§cThis pet is already out somewhere. Revoke it before summoning it again."),
+     MAX_ACTIVE_PETS_REACHED("§cYou have reached the maximum number of active pets!"),
+     PET_REPLACED_BY_NEW("§e%oldpet% has been replaced by %newpet%!"),
+     DEBUGGER_JOINING("§aDebugger is enabled. You are now listening to it."),
+--- /dev/null
++++ b/src/main/java/fr/nocsy/mcpets/data/RevokedPets.java
+@@ -0,0 +1,76 @@
++package fr.nocsy.mcpets.data;
++
++import fr.nocsy.mcpets.MCPets;
++import org.bukkit.configuration.file.YamlConfiguration;
++
++import java.io.File;
++import java.io.IOException;
++import java.util.HashMap;
++import java.util.Map;
++import java.util.UUID;
++import java.util.concurrent.TimeUnit;
++import java.util.logging.Level;
++
++/**
++ * Pets that were revoked while their chunk wasn't loaded.
++ * Their entity is saved with the chunk and comes back when it loads, so it's removed then.
++ * Kept in revoked-pets.yml so it still works after a restart.
++ */
++public class RevokedPets {
++
++    // A pet that never comes back (e.g. its chunk got deleted) is forgotten after a while
++    private static final long KEEP_FOR = TimeUnit.DAYS.toMillis(30);
++
++    private static Map<UUID, Long> revoked;
++
++    private static File getFile() {
++        return new File(MCPets.getInstance().getDataFolder(), "revoked-pets.yml");
++    }
++
++    private static Map<UUID, Long> get() {
++        if (revoked != null)
++            return revoked;
++
++        revoked = new HashMap<>();
++        final YamlConfiguration config = YamlConfiguration.loadConfiguration(getFile());
++        final long now = System.currentTimeMillis();
++        for (final String key : config.getKeys(false)) {
++            final long revokedAt = config.getLong(key);
++            if (now - revokedAt > KEEP_FOR) continue;
++            try {
++                revoked.put(UUID.fromString(key), revokedAt);
++            } catch (final IllegalArgumentException ignored) {
++                // Not an entity uuid, skipped
++            }
++        }
++        return revoked;
++    }
++
++    /**
++     * Remember that the entity with this uuid must be removed when it's loaded again
++     */
++    public static void add(final UUID entityId) {
++        get().put(entityId, System.currentTimeMillis());
++        save();
++    }
++
++    /**
++     * Say whether the entity with this uuid was revoked, and forget it
++     */
++    public static boolean consume(final UUID entityId) {
++        if (get().remove(entityId) == null)
++            return false;
++        save();
++        return true;
++    }
++
++    private static void save() {
++        final YamlConfiguration config = new YamlConfiguration();
++        revoked.forEach((uuid, revokedAt) -> config.set(uuid.toString(), revokedAt));
++        try {
++            config.save(getFile());
++        } catch (final IOException ex) {
++            MCPets.getLog().log(Level.WARNING, "Could not save revoked-pets.yml", ex);
++        }
++    }
++}

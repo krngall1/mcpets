@@ -26,6 +26,7 @@ import io.lumine.mythic.core.skills.CustomComponentRegistry;
 
 import fr.nocsy.mcpets.data.Pet;
 import fr.nocsy.mcpets.data.PetSkin;
+import fr.nocsy.mcpets.data.PlacedPets;
 import fr.nocsy.mcpets.data.sql.Databases;
 import fr.nocsy.mcpets.data.sql.PlayerData;
 import fr.nocsy.mcpets.data.config.PetConfig;
@@ -186,6 +187,9 @@ public class MCPets extends JavaPlugin {
         // Cancel pending editor conversations before the JAR is unloaded to avoid
         // IllegalStateException (zip file closed) if a listener fires after disable.
         EditorConversation.clearAll();
+
+        // Sitting and wandering pets stay in the world, their spots are kept for the next start
+        PlacedPets.saveAll();
 
         if (modeler != null) {
             modeler.unregisterListeners();

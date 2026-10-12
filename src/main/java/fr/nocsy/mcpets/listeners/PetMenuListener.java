@@ -6,7 +6,12 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.event.inventory.InventoryClickEvent;
 
+import fr.nocsy.mcpets.MCPets;
+import fr.nocsy.mcpets.commands.mcpets.ArgumentMenu;
 import fr.nocsy.mcpets.data.Pet;
+import fr.nocsy.mcpets.data.inventories.MountInteractionMenu;
+import fr.nocsy.mcpets.data.inventories.PetInteractionMenu;
+import org.bukkit.Bukkit;
 import fr.nocsy.mcpets.data.inventories.PetMenu;
 import fr.nocsy.mcpets.utils.MenuPaginationHelper;
 import fr.nocsy.mcpets.data.inventories.PetInventoryHolder;
@@ -42,10 +47,35 @@ public class PetMenuListener implements Listener {
 
         final Pet petObject = Pet.getFromIcon(it);
         if (petObject != null) {
-            p.closeInventory();
-            final Pet pet = petObject.copy();
-            pet.spawnWithMessage(p);
+            clickPetIcon(p, petObject);
         }
+    }
+
+    /**
+     * A pet icon was clicked in a pets menu: an active pet opens its own menu, any other pet is summoned
+     */
+    public static void clickPetIcon(final Player p, final Pet petObject) {
+        p.closeInventory();
+        final Pet active = Pet.getActivePet(p.getUniqueId(), petObject.getId());
+        if (active == null) {
+            petObject.copy().spawnWithMessage(p);
+            return;
+        }
+
+        // Opened on the next tick, not while the click on this menu is still being handled
+        Bukkit.getScheduler().runTask(MCPets.getInstance(), () -> {
+            final boolean loaded = active.isStillHere() && active.getActiveMob().getEntity().getBukkitEntity().isValid();
+            // A pet in an unloaded chunk gets the simple menu, its other buttons need the pet in the world
+            if (!loaded) {
+                ArgumentMenu.openCommandMenu(p, active, active.isMount());
+            } else if (active.isMount()) {
+                active.setLastInteractedWith(p);
+                new MountInteractionMenu(active, p.getUniqueId()).open(p);
+            } else {
+                active.setLastInteractedWith(p);
+                new PetInteractionMenu(active, p.getUniqueId()).open(p);
+            }
+        });
     }
 
 }

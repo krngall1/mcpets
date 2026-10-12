@@ -1,0 +1,174 @@
+--- a/src/main/java/fr/nocsy/mcpets/data/Pet.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Pet.java
+@@ -500,6 +500,46 @@
+     }
+ 
+     /**
++     * The given pets with the owner's active ones first, otherwise in the same order (pets menus)
++     */
++    public static List<Pet> activeFirst(final List<Pet> pets, final UUID owner) {
++        final Set<String> activeIds = new HashSet<>();
++        for (final Pet active : Pet.getActivePetsForOwner(owner))
++            activeIds.add(active.getId());
++        final List<Pet> sorted = new ArrayList<>(pets);
++        sorted.sort(Comparator.comparing(pet -> !activeIds.contains(pet.getId())));
++        return sorted;
++    }
++
++    /**
++     * The owner's active pet with this id, if any
++     */
++    public static Pet getActivePet(final UUID owner, final String id) {
++        for (final Pet active : Pet.getActivePetsForOwner(owner))
++            if (active.getId().equals(id))
++                return active;
++        return null;
++    }
++
++    /**
++     * The pet's icon in the pets menus: active pets glint and can be clicked to view, the others to summon
++     */
++    public ItemStack buildMenuIcon(final UUID viewer) {
++        final ItemStack it = buildItem(getIcon(), true);
++        final ItemMeta meta = it.getItemMeta();
++        if (meta == null)
++            return it;
++        final boolean active = getActivePet(viewer, id) != null;
++        final List<Component> lore = meta.hasLore() ? new ArrayList<>(meta.lore()) : new ArrayList<>();
++        lore.addAll(Utils.toComponents((active ? Language.PET_MENU_CLICK_TO_VIEW : Language.PET_MENU_CLICK_TO_SUMMON).getMessage()));
++        meta.lore(lore);
++        if (active)
++            meta.setEnchantmentGlintOverride(true);
++        it.setItemMeta(meta);
++        return it;
++    }
++
++    /**
+      * Clear the list of pets
+      */
+     public static void clearPets() {
+--- a/src/main/java/fr/nocsy/mcpets/data/Category.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Category.java
+@@ -68,13 +68,14 @@
+ 
+         p.closeInventory();
+ 
+-        final List<Pet> playerPets = new ArrayList<>();
++        List<Pet> playerPets = new ArrayList<>();
+         for (Pet pet : pets) {
+             if (!pet.has(p)) continue;
+             playerPets.add(pet);
+         }
+         
+         if (playerPets.isEmpty() && page > 0) return false;
++        playerPets = Pet.activeFirst(playerPets, p.getUniqueId());
+         
+         PaginationConfig config = MenuPaginationHelper.calculatePagination(page, playerPets.size());
+ 
+@@ -95,7 +96,7 @@
+ 
+         int slot = config.startSlot();
+         for (Pet pet : petsForPage) {
+-            inventory.setItem(slot++, pet.buildItem(pet.getIcon(), true));
++            inventory.setItem(slot++, pet.buildMenuIcon(p.getUniqueId()));
+         }
+ 
+         p.openInventory(inventory);
+--- a/src/main/java/fr/nocsy/mcpets/data/config/Language.java
++++ b/src/main/java/fr/nocsy/mcpets/data/config/Language.java
+@@ -46,6 +46,8 @@
+     PREVIOUS_PAGE_ITEM_DESCRIPTION("§eClick§7 to go backward"),
+ 
+     NICKNAME("§9Nickname : §7%nickname%"),
++    PET_MENU_CLICK_TO_VIEW("Click to view"),
++    PET_MENU_CLICK_TO_SUMMON("Click to summon"),
+     PET_MODE_SITTING("<gold>Sitting at: <gray>x: %x% y: %y% z: %z%"),
+     PET_MODE_WANDERING("<gold>Wandering around: <gray>x: %x% y: %y% z: %z%"),
+     PET_MODE_FOLLOWING("<gold>Following you"),
+--- a/src/main/java/fr/nocsy/mcpets/data/inventories/PetMenu.java
++++ b/src/main/java/fr/nocsy/mcpets/data/inventories/PetMenu.java
+@@ -34,7 +34,7 @@
+         PlayerData.get(p.getUniqueId());
+         owner = p.getUniqueId();
+ 
+-        final List<Pet> availablePets = Pet.getAvailablePets(p);
++        final List<Pet> availablePets = Pet.activeFirst(Pet.getAvailablePets(p), p.getUniqueId());
+ 
+         PaginationConfig config = MenuPaginationHelper.calculatePagination(page, availablePets.size());
+         
+@@ -46,7 +46,7 @@
+         inventory = new PetInventoryHolder(config.invSize(), title, PetInventoryHolder.Type.PET_MENU).getInventory();
+         int slot = config.startSlot();
+         for (final Pet pet : selectedPets) {
+-            inventory.setItem(slot++, pet.buildItem(pet.getIcon(), true));
++            inventory.setItem(slot++, pet.buildMenuIcon(p.getUniqueId()));
+         }
+ 
+         int maxPages = MenuPaginationHelper.calculateMaxPages(availablePets.size());
+--- a/src/main/java/fr/nocsy/mcpets/listeners/PetMenuListener.java
++++ b/src/main/java/fr/nocsy/mcpets/listeners/PetMenuListener.java
+@@ -6,7 +6,12 @@
+ import org.bukkit.inventory.ItemStack;
+ import org.bukkit.event.inventory.InventoryClickEvent;
+ 
++import fr.nocsy.mcpets.MCPets;
++import fr.nocsy.mcpets.commands.mcpets.ArgumentMenu;
+ import fr.nocsy.mcpets.data.Pet;
++import fr.nocsy.mcpets.data.inventories.MountInteractionMenu;
++import fr.nocsy.mcpets.data.inventories.PetInteractionMenu;
++import org.bukkit.Bukkit;
+ import fr.nocsy.mcpets.data.inventories.PetMenu;
+ import fr.nocsy.mcpets.utils.MenuPaginationHelper;
+ import fr.nocsy.mcpets.data.inventories.PetInventoryHolder;
+@@ -42,10 +47,35 @@
+ 
+         final Pet petObject = Pet.getFromIcon(it);
+         if (petObject != null) {
+-            p.closeInventory();
+-            final Pet pet = petObject.copy();
+-            pet.spawnWithMessage(p);
++            clickPetIcon(p, petObject);
+         }
+     }
+ 
++    /**
++     * A pet icon was clicked in a pets menu: an active pet opens its own menu, any other pet is summoned
++     */
++    public static void clickPetIcon(final Player p, final Pet petObject) {
++        p.closeInventory();
++        final Pet active = Pet.getActivePet(p.getUniqueId(), petObject.getId());
++        if (active == null) {
++            petObject.copy().spawnWithMessage(p);
++            return;
++        }
++
++        // Opened on the next tick, not while the click on this menu is still being handled
++        Bukkit.getScheduler().runTask(MCPets.getInstance(), () -> {
++            final boolean loaded = active.isStillHere() && active.getActiveMob().getEntity().getBukkitEntity().isValid();
++            // A pet in an unloaded chunk gets the simple menu, its other buttons need the pet in the world
++            if (!loaded) {
++                ArgumentMenu.openCommandMenu(p, active, active.isMount());
++            } else if (active.isMount()) {
++                active.setLastInteractedWith(p);
++                new MountInteractionMenu(active, p.getUniqueId()).open(p);
++            } else {
++                active.setLastInteractedWith(p);
++                new PetInteractionMenu(active, p.getUniqueId()).open(p);
++            }
++        });
++    }
++
+ }
+--- a/src/main/java/fr/nocsy/mcpets/listeners/CategoryMenuListener.java
++++ b/src/main/java/fr/nocsy/mcpets/listeners/CategoryMenuListener.java
+@@ -68,9 +68,7 @@
+ 
+         final Pet petObject = Pet.getFromIcon(it);
+         if (petObject != null) {
+-            p.closeInventory();
+-            final Pet pet = petObject.copy();
+-            pet.spawnWithMessage(p);
++            PetMenuListener.clickPetIcon(p, petObject);
+             Category.unregisterPlayerView(p);
+         }
+     }

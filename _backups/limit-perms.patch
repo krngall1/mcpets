@@ -1,0 +1,119 @@
+--- a/src/main/java/fr/nocsy/mcpets/data/Pet.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Pet.java
+@@ -864,7 +864,7 @@
+                     break;
+                 case Pet.MAX_ACTIVE_PETS_REACHED:
+                     Language.MAX_ACTIVE_PETS_REACHED.sendMessageFormatted(p,
+-                            new FormatArg("%max%", String.valueOf(GlobalConfig.getInstance().getMaxFollowingPets())));
++                            new FormatArg("%max%", String.valueOf(PetLimits.getMaxFollowingPets(p.getUniqueId()))));
+                     break;
+             }
+     }
+@@ -991,7 +991,7 @@
+     }
+ 
+     /**
+-     * Keep the owner's pets within MaxFollowingPets and MaxNonFollowingPets (0 means no limit).
++     * Keep the owner's pets within their following and sitting/wandering limits (see PetLimits, 0 means no limit).
+      * When this following pet goes over MaxFollowingPets, the oldest following pet sits down where it is,
+      * or is despawned if there's no room left for another sitting or wandering pet.
+      * Returns true if a pet was despawned
+@@ -1000,8 +1000,8 @@
+         // Sitting and wandering pets being relinked (chunk load, restart) are already placed, they don't take a follow slot
+         if (aiMode != PetAIMode.FOLLOW)
+             return false;
+-        final int maxFollowing = GlobalConfig.getInstance().getMaxFollowingPets();
+-        final int maxNonFollowing = GlobalConfig.getInstance().getMaxNonFollowingPets();
++        final int maxFollowing = PetLimits.getMaxFollowingPets(owner);
++        final int maxNonFollowing = PetLimits.getMaxNonFollowingPets(owner);
+         if (maxFollowing <= 0)
+             return false;
+ 
+@@ -1055,8 +1055,8 @@
+         if (toFollow == isFollowing)
+             return false;
+ 
+-        final int max = toFollow ? GlobalConfig.getInstance().getMaxFollowingPets()
+-                : GlobalConfig.getInstance().getMaxNonFollowingPets();
++        final int max = toFollow ? PetLimits.getMaxFollowingPets(owner)
++                : PetLimits.getMaxNonFollowingPets(owner);
+         if (max <= 0)
+             return false;
+ 
+--- a/src/main/java/fr/nocsy/mcpets/mythicmobs/mechanics/PetLimitMessageMechanic.java
++++ b/src/main/java/fr/nocsy/mcpets/mythicmobs/mechanics/PetLimitMessageMechanic.java
+@@ -3,7 +3,7 @@
+ import fr.nocsy.mcpets.data.Pet;
+ import fr.nocsy.mcpets.data.PetAIMode;
+ import fr.nocsy.mcpets.data.config.FormatArg;
+-import fr.nocsy.mcpets.data.config.GlobalConfig;
++import fr.nocsy.mcpets.data.PetLimits;
+ import fr.nocsy.mcpets.data.config.Language;
+ import org.bukkit.Bukkit;
+ import org.bukkit.entity.Player;
+@@ -50,10 +50,10 @@
+ 
+         if (mode == PetAIMode.FOLLOW) {
+             Language.MAX_FOLLOWING_PETS_REACHED.sendMessageFormatted(owner,
+-                    new FormatArg("%max%", String.valueOf(GlobalConfig.getInstance().getMaxFollowingPets())));
++                    new FormatArg("%max%", String.valueOf(PetLimits.getMaxFollowingPets(owner.getUniqueId()))));
+         } else {
+             Language.MAX_NON_FOLLOWING_PETS_REACHED.sendMessageFormatted(owner,
+-                    new FormatArg("%max%", String.valueOf(GlobalConfig.getInstance().getMaxNonFollowingPets())));
++                    new FormatArg("%max%", String.valueOf(PetLimits.getMaxNonFollowingPets(owner.getUniqueId()))));
+         }
+         return SkillResult.SUCCESS;
+     }
+--- /dev/null
++++ b/src/main/java/fr/nocsy/mcpets/data/PetLimits.java
+@@ -0,0 +1,50 @@
++package fr.nocsy.mcpets.data;
++
++import fr.nocsy.mcpets.data.config.GlobalConfig;
++import org.bukkit.Bukkit;
++import org.bukkit.entity.Player;
++
++import java.util.UUID;
++
++/**
++ * Each player's limits for following and for sitting/wandering pets.
++ * The base comes from config.yml (MaxFollowingPets, MaxNonFollowingPets) and ranks raise it with permissions:
++ * mcpets.follow_limit.<1-16> and mcpets.non_follow_limit.<1-16> add their number (only the highest counts),
++ * mcpets.follow_limit.* and mcpets.non_follow_limit.* remove the limit.
++ * 0 means no limit.
++ */
++public class PetLimits {
++
++    public static final String FOLLOW_NODE = "mcpets.follow_limit.";
++    public static final String NON_FOLLOW_NODE = "mcpets.non_follow_limit.";
++    private static final int MAX_BONUS = 16;
++
++    public static int getMaxFollowingPets(final UUID owner) {
++        return getLimit(owner, GlobalConfig.getInstance().getMaxFollowingPets(), FOLLOW_NODE);
++    }
++
++    public static int getMaxNonFollowingPets(final UUID owner) {
++        return getLimit(owner, GlobalConfig.getInstance().getMaxNonFollowingPets(), NON_FOLLOW_NODE);
++    }
++
++    private static int getLimit(final UUID owner, final int base, final String node) {
++        if (base <= 0)
++            return 0;
++        final Player player = owner == null ? null : Bukkit.getPlayer(owner);
++        // Pets of offline owners don't change mode, so the base is enough
++        if (player == null)
++            return base;
++        if (has(player, node + "*"))
++            return 0;
++        for (int bonus = MAX_BONUS; bonus > 0; bonus--) {
++            if (has(player, node + bonus))
++                return base + bonus;
++        }
++        return base;
++    }
++
++    // Only nodes that are actually given count, so ops don't get every bonus by default
++    private static boolean has(final Player player, final String permission) {
++        return player.isPermissionSet(permission) && player.hasPermission(permission);
++    }
++}

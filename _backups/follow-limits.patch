@@ -1,0 +1,184 @@
+--- a/src/main/java/fr/nocsy/mcpets/data/Pet.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Pet.java
+@@ -864,7 +864,7 @@
+                     break;
+                 case Pet.MAX_ACTIVE_PETS_REACHED:
+                     Language.MAX_ACTIVE_PETS_REACHED.sendMessageFormatted(p,
+-                            new FormatArg("%max%", String.valueOf(GlobalConfig.getInstance().getMaxActivePets())));
++                            new FormatArg("%max%", String.valueOf(GlobalConfig.getInstance().getMaxFollowingPets())));
+                     break;
+             }
+     }
+@@ -916,12 +916,13 @@
+         final boolean isMount = this.isMount();
+         Debugger.send("§b[LIMIT CHECK] Pet " + this.id + " isMount: " + isMount);
+ 
+-        final int maxAllowed = isMount ?
+-                GlobalConfig.getInstance().getMaxActiveMounts() :
+-                GlobalConfig.getInstance().getMaxActivePets();
+-        Debugger.send("§b[LIMIT CHECK] Max allowed for " + (isMount ? "mounts" : "pets") + ": " + maxAllowed);
++        final int maxAllowed = GlobalConfig.getInstance().getMaxActiveMounts();
+ 
+-        if (maxAllowed > 0) {
++        // Pets have separate limits for following and for sitting/wandering pets
++        if (!isMount) {
++            replaced = enforcePetLimits();
++        } else if (maxAllowed > 0) {
++            Debugger.send("§b[LIMIT CHECK] Max allowed for mounts: " + maxAllowed);
+             // Get all active pets/mounts of the same type for this owner
+             // Get all active pets/mounts of the same type for this owner
+             final List<Pet> sameLevelTypePets = Pet.getActivePetsForOwner(owner).stream()
+@@ -990,6 +991,99 @@
+     }
+ 
+     /**
++     * Keep the owner's pets within MaxFollowingPets and MaxNonFollowingPets (0 means no limit).
++     * When this following pet goes over MaxFollowingPets, the oldest following pet sits down where it is,
++     * or is despawned if there's no room left for another sitting or wandering pet.
++     * Returns true if a pet was despawned
++     */
++    private boolean enforcePetLimits() {
++        // Sitting and wandering pets being relinked (chunk load, restart) are already placed, they don't take a follow slot
++        if (aiMode != PetAIMode.FOLLOW)
++            return false;
++        final int maxFollowing = GlobalConfig.getInstance().getMaxFollowingPets();
++        final int maxNonFollowing = GlobalConfig.getInstance().getMaxNonFollowingPets();
++        if (maxFollowing <= 0)
++            return false;
++
++        boolean despawned = false;
++        while (true) {
++            final List<Pet> pets = Pet.getActivePetsForOwner(owner).stream()
++                    .filter(p -> !p.isMount())
++                    .toList();
++            final List<Pet> following = pets.stream()
++                    .filter(p -> p.getAiMode() == PetAIMode.FOLLOW)
++                    .toList();
++            final long nonFollowing = pets.stream()
++                    .filter(p -> p.getAiMode() == PetAIMode.SIT || p.getAiMode() == PetAIMode.WANDER)
++                    .count();
++            Debugger.send("§b[LIMIT CHECK] Following: " + following.size() + "/" + maxFollowing
++                    + ", sitting or wandering: " + nonFollowing + "/" + maxNonFollowing);
++            if (following.size() <= maxFollowing)
++                break;
++
++            // The oldest following pet makes room, never the new one
++            final Pet oldest = following.stream().filter(p -> p != this).findFirst().orElse(null);
++            if (oldest == null)
++                break;
++
++            if ((maxNonFollowing <= 0 || nonFollowing < maxNonFollowing) && oldest.sitDown()) {
++                Debugger.send("§e" + oldest.getId() + " sat down to make room for " + this.id);
++                final Player ownerPlayer = Bukkit.getPlayer(owner);
++                if (ownerPlayer != null)
++                    Language.PET_SAT_FOR_NEW_ONE.sendMessage(ownerPlayer);
++                continue;
++            }
++
++            Debugger.send("§eDespawning " + oldest.getId() + " to make room for " + this.id);
++            oldest.despawn(PetDespawnReason.REPLACED);
++            despawned = true;
++        }
++        return despawned;
++    }
++
++    /**
++     * Sit this pet down where it is, like the whistle does.
++     * Java sets the mode and the tags, the SitSkill (config.yml) does the rest (speed, AI goals).
++     * Returns false if the pet isn't in the world
++     */
++    public boolean sitDown() {
++        if (!isStillHere())
++            return false;
++        final Entity ent = activeMob.getEntity().getBukkitEntity();
++        if (!ent.isValid())
++            return false;
++
++        ent.removeScoreboardTag(PetAIMode.FOLLOW.getMode());
++        ent.removeScoreboardTag(PetAIMode.WANDER.getMode());
++        ent.addScoreboardTag(PetAIMode.SIT.getMode());
++        aiMode = PetAIMode.SIT;
++
++        final String sitSkillName = GlobalConfig.getInstance().getSitSkill();
++        final Skill sitSkillMM = sitSkillName == null || sitSkillName.isEmpty() ? null : Utils.getSkill(sitSkillName);
++        if (sitSkillMM != null) {
++            try {
++                sitSkillMM.execute(new SkillMetadataImpl(SkillTriggers.CUSTOM, activeMob, activeMob.getEntity()));
++            } catch (final Exception ex) {
++                Debugger.send("§cCould not run the sit skill " + sitSkillName + " of pet " + id + ": " + ex.getMessage());
++            }
++        } else {
++            Debugger.send("§cThe SitSkill §6" + sitSkillName + "§c doesn't exist in MythicMobs, pet " + id + " only had its mode changed.");
++        }
++
++        // The pet is restored sitting after a restart
++        if (GlobalConfig.getInstance().isSpawnPetAfterServerRestart() && owner != null) {
++            final PlayerData pd = PlayerData.get(owner);
++            if (pd != null) {
++                final PetSkin activeSkin = getActiveSkin();
++                pd.removeLastActivePet(id);
++                pd.addLastActivePet(PlayerData.encodeActivePet(id, aiMode, activeSkin != null ? activeSkin.getPathId() : null));
++                pd.save();
++            }
++        }
++        return true;
++    }
++
++    /**
+      * Set the active mob of the pet instance
+      * This will not synchronize with the pet's owner, so be extra careful with using this method
+      * You'd rather use "changeActiveMobTo" instead
+--- a/src/main/java/fr/nocsy/mcpets/data/config/GlobalConfig.java
++++ b/src/main/java/fr/nocsy/mcpets/data/config/GlobalConfig.java
+@@ -56,7 +56,11 @@
+     @Getter
+     private boolean nameTagAlwaysVisible;
+     @Getter
+-    private int maxActivePets;
++    private int maxFollowingPets;
++    @Getter
++    private int maxNonFollowingPets;
++    @Getter
++    private String sitSkill;
+     @Getter
+     private int maxActiveMounts;
+     @Getter
+@@ -232,8 +236,15 @@
+             getConfig().set("DisableFastMountWhileHoldingSignalStick", false);
+         if (getConfig().get("SpawnPetAfterServerRestart") == null)
+             getConfig().set("SpawnPetAfterServerRestart", true);
+-        if (getConfig().get("MaxActivePets") == null)
+-            getConfig().set("MaxActivePets", 1);
++        // MaxActivePets became MaxNonFollowingPets, the old value is kept
++        if (getConfig().get("MaxNonFollowingPets") == null)
++            getConfig().set("MaxNonFollowingPets", getConfig().getInt("MaxActivePets", 1));
++        getConfig().set("MaxActivePets", null);
++        if (getConfig().get("MaxFollowingPets") == null)
++            getConfig().set("MaxFollowingPets", 1);
++        // MythicMobs skill run on a following pet that MCPets sits down to make room for a new one
++        if (getConfig().get("SitSkill") == null)
++            getConfig().set("SitSkill", "pet_force_sit");
+         if (getConfig().get("MaxActiveMounts") == null)
+             getConfig().set("MaxActiveMounts", 1);
+ 
+@@ -320,7 +331,9 @@
+         }
+ 
+         spawnPetAfterServerRestart = getConfig().getBoolean("SpawnPetAfterServerRestart");
+-        maxActivePets = getConfig().getInt("MaxActivePets");
++        maxFollowingPets = getConfig().getInt("MaxFollowingPets");
++        maxNonFollowingPets = getConfig().getInt("MaxNonFollowingPets");
++        sitSkill = getConfig().getString("SitSkill");
+         maxActiveMounts = getConfig().getInt("MaxActiveMounts");
+     }
+ 
+--- a/src/main/java/fr/nocsy/mcpets/data/config/Language.java
++++ b/src/main/java/fr/nocsy/mcpets/data/config/Language.java
+@@ -145,6 +145,7 @@
+     PET_STATS_EVOLUTION_ALREADY_OWNED("§cEvolution already owned."),
+     PET_STATS_MAX_LEVEL("§7Maximum level reached."),
+     PET_ALREADY_ACTIVE("§cThis pet is already out somewhere. Revoke it before summoning it again."),
++    PET_SAT_FOR_NEW_ONE("§7Your oldest following pet sat down to make room for the new one."),
+     MAX_ACTIVE_PETS_REACHED("§cYou have reached the maximum number of active pets!"),
+     PET_REPLACED_BY_NEW("§e%oldpet% has been replaced by %newpet%!"),
+     DEBUGGER_JOINING("§aDebugger is enabled. You are now listening to it."),
