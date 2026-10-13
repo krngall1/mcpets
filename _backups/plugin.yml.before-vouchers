@@ -1,0 +1,45 @@
+name: '${project.name}'
+version: '${project.version}'
+description: MCModels affiliate plugin. Join the workshop! https://discord.gg/p7QTm2gUyf
+load: POSTWORLD
+author: Nocsy
+website: 'https://mcpets.gitbook.io/mcpets'
+
+main: fr.nocsy.mcpets.MCPets
+api-version: 1.21
+database: false
+prefix: '${project.name}'
+depend:
+  - MythicMobs
+softdepend:
+  - ModelEngine
+  - BetterModel
+  - Nexo
+  - WorldGuard
+  - LuckPerms
+  - PlaceholderAPI
+  - ItemsAdder
+loadbefore: []
+
+# Plugin messaging channel "mcpets:sync" is registered in code via Bukkit.getMessenger()
+# (the 'channels' key is not part of the Bukkit plugin descriptor schema)
+
+commands:
+  mcpets:
+    description: Command to manage your pets
+    Usage: /mcpets
+    permission: mcpets.use
+    aliases: [pets]
+  mcmounts:
+    description: Command to view your mounts
+    Usage: /mcmounts
+    permission: mcpets.use
+    aliases: [mounts]
+
+permissions:
+  mcpets.use:
+    default: true
+  mcpets.admin:
+    default: op
+  mcpets.color:
+    default: op

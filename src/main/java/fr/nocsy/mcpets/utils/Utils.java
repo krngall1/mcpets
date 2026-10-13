@@ -347,6 +347,13 @@ public class Utils {
     }
 
     /**
+     * Check if the player was given the permission directly (LuckPerms user node, not from a group)
+     */
+    public static boolean hasOwnPermissionNode(@NotNull final UUID uuid, final String permission) {
+        return PermsUtils.hasOwnPermissionNode(uuid, permission);
+    }
+
+    /**
      * Check if the player has the permission
      */
     public static boolean hasPermission(@NotNull final UUID uuid, final String permission) {

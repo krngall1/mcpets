@@ -3,6 +3,7 @@ package fr.nocsy.mcpets.utils;
 import fr.nocsy.mcpets.MCPets;
 import net.luckperms.api.model.user.User;
 import net.luckperms.api.node.Node;
+import net.luckperms.api.node.NodeType;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
@@ -65,6 +66,20 @@ public class PermsUtils {
         }
 
         return false;
+    }
+
+    /**
+     * Check if the player has the permission as a node of their own (not from a group), in every context.
+     * That's the node removePermission takes away.
+     */
+    protected static boolean hasOwnPermissionNode(@NotNull UUID uuid, String permission) {
+        if (MCPets.getLuckPerms() == null)
+            return false;
+        final User user = MCPets.getLuckPerms().getUserManager().getUser(uuid);
+        if (user == null)
+            return false;
+        return user.getNodes(NodeType.PERMISSION).stream()
+                .anyMatch(node -> node.getPermission().equals(permission) && node.getValue() && node.getContexts().isEmpty());
     }
 
     /**

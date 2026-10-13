@@ -161,6 +161,14 @@ public enum Language {
     MAX_NON_FOLLOWING_PETS_REACHED("§cYou can have at most %max% sitting or wandering pets."),
     MAX_ACTIVE_PETS_REACHED("§cYou have reached the maximum number of active pets!"),
     PET_REPLACED_BY_NEW("§e%oldpet% has been replaced by %newpet%!"),
+    PET_WITHDRAWN("§a%pet% was turned into a voucher."),
+    PET_WITHDRAW_NOT_ALLOWED("§cThis pet can't be withdrawn."),
+    PET_WITHDRAW_NOT_OWNED("§cYou don't own this pet."),
+    PET_WITHDRAW_FROM_RANK("§cThis pet comes with your rank and can't be withdrawn."),
+    PET_WITHDRAW_FAILED("§cThis pet couldn't be withdrawn, please tell an admin."),
+    PET_VOUCHER_REDEEMED("§a%pet% is now yours!"),
+    PET_VOUCHER_ALREADY_OWNED("§cYou already own %pet%."),
+    PET_VOUCHER_INVALID("§cThis voucher's pet doesn't exist anymore."),
     DEBUGGER_JOINING("§aDebugger is enabled. You are now listening to it."),
     DEBUGGER_LEAVE("§aDebugger is §7disabled§a. You will not be listening to it anymore.");
 

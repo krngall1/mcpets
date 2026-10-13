@@ -1,0 +1,572 @@
+--- a/pom.xml
++++ b/pom.xml
+@@ -50,6 +50,7 @@
+         <maven.compiler.source>17</maven.compiler.source>
+         <maven.compiler.target>17</maven.compiler.target>
+         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
++        <craftengine.version>26.9</craftengine.version>
+     </properties>
+     <repositories>
+         <repository>
+@@ -99,6 +100,10 @@
+             <id>matteodev</id>
+             <url>https://maven.devs.beer/</url>
+         </repository>
++        <repository>
++            <id>momirealms-repo</id>
++            <url>https://repo.momirealms.net/releases/</url>
++        </repository>
+     </repositories>
+ 
+     <dependencies>
+@@ -189,5 +194,18 @@
+                 </exclusion>
+             </exclusions>
+         </dependency>
++        <!-- CraftEngine custom items (pet vouchers). Keep the version in line with the server's CraftEngine -->
++        <dependency>
++            <groupId>net.momirealms</groupId>
++            <artifactId>craft-engine-core</artifactId>
++            <version>${craftengine.version}</version>
++            <scope>provided</scope>
++        </dependency>
++        <dependency>
++            <groupId>net.momirealms</groupId>
++            <artifactId>craft-engine-bukkit</artifactId>
++            <version>${craftengine.version}</version>
++            <scope>provided</scope>
++        </dependency>
+     </dependencies>
+ </project>
+--- a/src/main/java/fr/nocsy/mcpets/commands/mcpets/MCPetsCommand.java
++++ b/src/main/java/fr/nocsy/mcpets/commands/mcpets/MCPetsCommand.java
+@@ -58,6 +58,7 @@
+                     new ArgumentRevoke(sender, args),
+                     new ArgumentSignalStick(sender, args),
+                     new ArgumentSpawn(sender, args),
++                    new ArgumentWithdraw(sender, args),
+                     new ArgumentEditor(sender, args),
+             };
+ 
+--- a/src/main/java/fr/nocsy/mcpets/commands/tabcompleters/MCPetsCommandTabCompleter.java
++++ b/src/main/java/fr/nocsy/mcpets/commands/tabcompleters/MCPetsCommandTabCompleter.java
+@@ -3,6 +3,7 @@
+ import fr.nocsy.mcpets.PPermission;
+ import fr.nocsy.mcpets.data.Category;
+ import fr.nocsy.mcpets.data.Pet;
++import fr.nocsy.mcpets.data.PetVoucher;
+ import fr.nocsy.mcpets.data.config.ItemsListConfig;
+ import fr.nocsy.mcpets.data.config.PetFoodConfig;
+ import fr.nocsy.mcpets.data.livingpets.PetFood;
+@@ -39,6 +40,7 @@
+                 if (args.length == 1) {
+                     completed.add("menu");
+                     completed.add("name");
++                    completed.add("withdraw");
+                 }
+                 else if (args.length == 2 && args[0].equalsIgnoreCase("menu")) {
+                     completed.addAll(Pet.getActivePetsForOwner(p.getUniqueId())
+@@ -47,6 +49,12 @@
+                             .map(Pet::getId)
+                             .collect(Collectors.toList()));
+                 }
++                else if (args.length == 2 && args[0].equalsIgnoreCase("withdraw")) {
++                    completed.addAll(Pet.getObjectPets().stream()
++                            .filter(pet -> PetVoucher.canWithdraw(pet) && p.hasPermission(pet.getPermission()))
++                            .map(Pet::getId)
++                            .toList());
++                }
+ 
+                 if (!p.hasPermission(PPermission.ADMIN.getPermission()))
+                     return completed.stream()
+--- a/src/main/java/fr/nocsy/mcpets/data/Pet.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Pet.java
+@@ -153,6 +153,16 @@
+ 
+     @Getter
+     @Setter
++    // Can the owner trade the pet in for a voucher item (see PetVoucher)
++    private boolean withdrawable;
++
++    @Getter
++    @Setter
++    // Id of the voucher item, e.g. "minecraft:paper" or a CraftEngine item like "pet_vouchers:blaze"
++    private String withdrawItem;
++
++    @Getter
++    @Setter
+     private String tamingProgressSkill;
+ 
+     @Getter
+@@ -1830,6 +1840,8 @@
+         pet.setComingBackRange(comingBackRange);
+         pet.setDespawnSkill(despawnSkill);
+         pet.setLoadSkill(loadSkill);
++        pet.setWithdrawable(withdrawable);
++        pet.setWithdrawItem(withdrawItem);
+         pet.setTamingProgressSkill(tamingProgressSkill);
+         pet.setTamingOverSkill(tamingOverSkill);
+         pet.setMountable(mountable);
+--- a/src/main/java/fr/nocsy/mcpets/data/config/Language.java
++++ b/src/main/java/fr/nocsy/mcpets/data/config/Language.java
+@@ -161,6 +161,14 @@
+     MAX_NON_FOLLOWING_PETS_REACHED("§cYou can have at most %max% sitting or wandering pets."),
+     MAX_ACTIVE_PETS_REACHED("§cYou have reached the maximum number of active pets!"),
+     PET_REPLACED_BY_NEW("§e%oldpet% has been replaced by %newpet%!"),
++    PET_WITHDRAWN("§a%pet% was turned into a voucher."),
++    PET_WITHDRAW_NOT_ALLOWED("§cThis pet can't be withdrawn."),
++    PET_WITHDRAW_NOT_OWNED("§cYou don't own this pet."),
++    PET_WITHDRAW_FROM_RANK("§cThis pet comes with your rank and can't be withdrawn."),
++    PET_WITHDRAW_FAILED("§cThis pet couldn't be withdrawn, please tell an admin."),
++    PET_VOUCHER_REDEEMED("§a%pet% is now yours!"),
++    PET_VOUCHER_ALREADY_OWNED("§cYou already own %pet%."),
++    PET_VOUCHER_INVALID("§cThis voucher's pet doesn't exist anymore."),
+     DEBUGGER_JOINING("§aDebugger is enabled. You are now listening to it."),
+     DEBUGGER_LEAVE("§aDebugger is §7disabled§a. You will not be listening to it anymore.");
+ 
+--- a/src/main/java/fr/nocsy/mcpets/data/config/PetConfig.java
++++ b/src/main/java/fr/nocsy/mcpets/data/config/PetConfig.java
+@@ -72,7 +72,7 @@
+         reorderKeys("Id", "MythicMob", "Permission", "Distance", "SpawnRange", "ComingBackRange",
+                 "Mountable", "MountType", "MountPermission", "DespawnOnDismount", "AutoRide",
+                 "Invulnerable", "InventorySize", "UseDefaultMythicMobsName",
+-                "DespawnSkill", "SpawnSkill", "LoadSkill", "Taming", "Icon", "Signals", "Levels");
++                "DespawnSkill", "SpawnSkill", "LoadSkill", "Withdrawable", "WithdrawItem", "Taming", "Icon", "Signals", "Levels");
+         save();
+     }
+ 
+@@ -144,6 +144,8 @@
+         final int comingBackRange = getConfig().getInt("ComingBackRange");
+         final String despawnSkillName = getConfig().getString("DespawnSkill");
+         final String loadSkillName = getConfig().getString("LoadSkill");
++        final boolean withdrawable = getConfig().getBoolean("Withdrawable");
++        final String withdrawItem = getConfig().getString("WithdrawItem");
+         final String tamingSkillName = getConfig().getString("Taming.TamingProgressSkill");
+         final String tamingOverSkillName = getConfig().getString("Taming.TamingFinishedSkill");
+ 
+@@ -197,6 +199,12 @@
+ 
+         pet.setDespawnSkill(despawnSkillName);
+         pet.setLoadSkill(loadSkillName);
++        pet.setWithdrawable(withdrawable);
++        pet.setWithdrawItem(withdrawItem);
++        if (withdrawable && (withdrawItem == null || withdrawItem.isBlank()))
++            MCPets.getLog().warning("Pet " + id + " is Withdrawable but has no WithdrawItem, it can't be withdrawn.");
++        if (withdrawable && PPermission.USE.getPermission().equals(permission))
++            MCPets.getLog().warning("Pet " + id + " is Withdrawable but uses the shared " + permission + " permission, it can't be withdrawn.");
+         pet.setTamingProgressSkill(tamingSkillName);
+         pet.setTamingOverSkill(tamingOverSkillName);
+ 
+--- a/src/main/java/fr/nocsy/mcpets/listeners/EventListener.java
++++ b/src/main/java/fr/nocsy/mcpets/listeners/EventListener.java
+@@ -23,6 +23,7 @@
+         listeners.add(new CategoryMenuListener());
+         listeners.add(new PetInventoryListener());
+         listeners.add(new SignalStickListener());
++        listeners.add(new PetVoucherListener());
+         listeners.add(new PetSkinsMenuListener());
+         listeners.add(new VanillaDismountListener());
+         listeners.add(new MountWallClipListener());
+--- a/src/main/java/fr/nocsy/mcpets/utils/PermsUtils.java
++++ b/src/main/java/fr/nocsy/mcpets/utils/PermsUtils.java
+@@ -3,6 +3,7 @@
+ import fr.nocsy.mcpets.MCPets;
+ import net.luckperms.api.model.user.User;
+ import net.luckperms.api.node.Node;
++import net.luckperms.api.node.NodeType;
+ import org.bukkit.Bukkit;
+ import org.bukkit.entity.Player;
+ import org.jetbrains.annotations.NotNull;
+@@ -68,6 +69,20 @@
+     }
+ 
+     /**
++     * Check if the player has the permission as a node of their own (not from a group), in every context.
++     * That's the node removePermission takes away.
++     */
++    protected static boolean hasOwnPermissionNode(@NotNull UUID uuid, String permission) {
++        if (MCPets.getLuckPerms() == null)
++            return false;
++        final User user = MCPets.getLuckPerms().getUserManager().getUser(uuid);
++        if (user == null)
++            return false;
++        return user.getNodes(NodeType.PERMISSION).stream()
++                .anyMatch(node -> node.getPermission().equals(permission) && node.getValue() && node.getContexts().isEmpty());
++    }
++
++    /**
+      * Check if the player has the permission
+      */
+     protected static boolean hasPermission(@NotNull UUID uuid, String permission) {
+--- a/src/main/java/fr/nocsy/mcpets/utils/Utils.java
++++ b/src/main/java/fr/nocsy/mcpets/utils/Utils.java
+@@ -347,6 +347,13 @@
+     }
+ 
+     /**
++     * Check if the player was given the permission directly (LuckPerms user node, not from a group)
++     */
++    public static boolean hasOwnPermissionNode(@NotNull final UUID uuid, final String permission) {
++        return PermsUtils.hasOwnPermissionNode(uuid, permission);
++    }
++
++    /**
+      * Check if the player has the permission
+      */
+     public static boolean hasPermission(@NotNull final UUID uuid, final String permission) {
+--- a/src/main/resources/plugin.yml
++++ b/src/main/resources/plugin.yml
+@@ -19,6 +19,7 @@
+   - LuckPerms
+   - PlaceholderAPI
+   - ItemsAdder
++  - CraftEngine
+ loadbefore: []
+ 
+ # Plugin messaging channel "mcpets:sync" is registered in code via Bukkit.getMessenger()
+--- /dev/null
++++ b/src/main/java/fr/nocsy/mcpets/commands/mcpets/ArgumentWithdraw.java
+@@ -0,0 +1,24 @@
++package fr.nocsy.mcpets.commands.mcpets;
++
++import fr.nocsy.mcpets.commands.AArgument;
++import fr.nocsy.mcpets.data.PetVoucher;
++import org.bukkit.command.CommandSender;
++import org.bukkit.entity.Player;
++
++public class ArgumentWithdraw extends AArgument {
++
++    public ArgumentWithdraw(CommandSender sender, String[] args) {
++        super("withdraw", new int[]{2}, sender, args, "/mcpets withdraw <pet>");
++    }
++
++    // Trade one of your own pets in for its voucher (only pets that are Withdrawable)
++    @Override
++    public void commandEffect() {
++        PetVoucher.withdraw((Player) sender, args[1]);
++    }
++
++    @Override
++    protected boolean additionalConditions() {
++        return sender instanceof Player;
++    }
++}
+--- /dev/null
++++ b/src/main/java/fr/nocsy/mcpets/data/PetVoucher.java
+@@ -0,0 +1,243 @@
++package fr.nocsy.mcpets.data;
++
++import fr.nocsy.mcpets.MCPets;
++import fr.nocsy.mcpets.PPermission;
++import fr.nocsy.mcpets.data.config.FormatArg;
++import fr.nocsy.mcpets.data.config.Language;
++import fr.nocsy.mcpets.utils.CraftEngineCompat;
++import fr.nocsy.mcpets.utils.Utils;
++import org.bukkit.Bukkit;
++import org.bukkit.Material;
++import org.bukkit.NamespacedKey;
++import org.bukkit.entity.Player;
++import org.bukkit.inventory.EquipmentSlot;
++import org.bukkit.inventory.ItemStack;
++import org.bukkit.inventory.meta.ItemMeta;
++import org.bukkit.persistence.PersistentDataType;
++import org.jetbrains.annotations.Nullable;
++
++import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.logging.Level;
++
++/**
++ * Pets that are Withdrawable can be traded in for a voucher item: the owner loses the pet's permission
++ * and gets the item, which can be traded. Right clicking with the voucher gives the permission back
++ * to whoever holds it, if they don't already own the pet.
++ * The pet id is stored on the voucher, the permission is read from the pet config when it's redeemed.
++ */
++public final class PetVoucher {
++
++    private static final NamespacedKey VOUCHER_KEY = new NamespacedKey("mcpets", "pet_voucher");
++
++    // Players with a withdraw or redeem waiting on LuckPerms, so a second click can't run it twice
++    private static final Set<String> pending = ConcurrentHashMap.newKeySet();
++
++    public enum WithdrawResult {
++        WITHDRAWN,
++        NOT_WITHDRAWABLE,
++        NOT_OWNED,
++        FROM_RANK,
++        BUSY,
++        FAILED
++    }
++
++    private PetVoucher() {}
++
++    /**
++     * The voucher item for this pet, tagged with the pet id
++     * null if the pet has no WithdrawItem or it can't be found
++     */
++    @Nullable
++    public static ItemStack buildVoucher(final Pet pet, @Nullable final Player player) {
++        final ItemStack item = resolveItem(pet.getWithdrawItem(), player);
++        if (item == null)
++            return null;
++        final ItemMeta meta = item.getItemMeta();
++        if (meta == null)
++            return null;
++        meta.getPersistentDataContainer().set(VOUCHER_KEY, PersistentDataType.STRING, pet.getId());
++        item.setItemMeta(meta);
++        return item;
++    }
++
++    /**
++     * Item from an id: "minecraft:paper" (or just "paper") is a vanilla item,
++     * any other namespace (e.g. "pet_vouchers:blaze") is looked up in CraftEngine
++     */
++    @Nullable
++    public static ItemStack resolveItem(@Nullable final String id, @Nullable final Player player) {
++        if (id == null || id.isBlank())
++            return null;
++        final String trimmed = id.trim();
++        final int colon = trimmed.indexOf(':');
++        if (colon < 0 || trimmed.substring(0, colon).equalsIgnoreCase("minecraft")) {
++            final Material material = Material.matchMaterial(trimmed);
++            return material != null && material.isItem() ? new ItemStack(material) : null;
++        }
++        return CraftEngineCompat.buildItem(trimmed, player);
++    }
++
++    /**
++     * Id of the pet this item is a voucher for, null if it isn't a voucher
++     */
++    @Nullable
++    public static String getVoucherPetId(@Nullable final ItemStack item) {
++        if (item == null || !item.hasItemMeta())
++            return null;
++        return item.getItemMeta().getPersistentDataContainer().get(VOUCHER_KEY, PersistentDataType.STRING);
++    }
++
++    public static boolean isVoucher(@Nullable final ItemStack item) {
++        return getVoucherPetId(item) != null;
++    }
++
++    /**
++     * Can this pet be withdrawn at all (config wise)
++     */
++    public static boolean canWithdraw(@Nullable final Pet pet) {
++        return pet != null
++                && pet.isWithdrawable()
++                && pet.getWithdrawItem() != null && !pet.getWithdrawItem().isBlank()
++                && pet.getPermission() != null
++                // Taking the shared permission away would lock the player out of MCPets
++                && !pet.getPermission().equals(PPermission.USE.getPermission());
++    }
++
++    /**
++     * Take the pet away from the player and give them its voucher.
++     * The pet is revoked if it's out, the permission is removed, then the voucher is given.
++     * The player is told the outcome.
++     */
++    public static WithdrawResult withdraw(final Player player, final String petId) {
++        final WithdrawResult result = tryWithdraw(player, petId);
++        switch (result) {
++            case NOT_WITHDRAWABLE -> Language.PET_WITHDRAW_NOT_ALLOWED.sendMessage(player);
++            case NOT_OWNED -> Language.PET_WITHDRAW_NOT_OWNED.sendMessage(player);
++            case FROM_RANK -> Language.PET_WITHDRAW_FROM_RANK.sendMessage(player);
++            case FAILED -> Language.PET_WITHDRAW_FAILED.sendMessage(player);
++            // WITHDRAWN is announced once the voucher is given, BUSY is a double click
++            default -> {}
++        }
++        return result;
++    }
++
++    private static WithdrawResult tryWithdraw(final Player player, final String petId) {
++        final Pet pet = Pet.getFromId(petId);
++        if (!canWithdraw(pet))
++            return WithdrawResult.NOT_WITHDRAWABLE;
++        if (!Utils.hasPermission(player.getUniqueId(), pet.getPermission()))
++            return WithdrawResult.NOT_OWNED;
++        // Without LuckPerms the permission can't be removed for good
++        if (MCPets.getLuckPerms() == null) {
++            MCPets.getLog().warning("Pet " + petId + " can't be withdrawn: LuckPerms is needed to remove its permission.");
++            return WithdrawResult.FAILED;
++        }
++
++        // A pet that comes with a rank (group or wildcard permission) can't be taken away by removing the player's node
++        if (!Utils.hasOwnPermissionNode(player.getUniqueId(), pet.getPermission()))
++            return WithdrawResult.FROM_RANK;
++
++        final ItemStack voucher = buildVoucher(pet, player);
++        if (voucher == null) {
++            MCPets.getLog().warning("Pet " + petId + " can't be withdrawn: WithdrawItem " + pet.getWithdrawItem() + " could not be found.");
++            return WithdrawResult.FAILED;
++        }
++
++        final String key = pendingKey(player, petId);
++        if (!pending.add(key))
++            return WithdrawResult.BUSY;
++
++        final Pet active = Pet.getActivePet(player.getUniqueId(), petId);
++        if (active != null)
++            active.despawn(PetDespawnReason.REVOKE);
++
++        Utils.removePermissionAsync(player.getUniqueId(), pet.getPermission()).whenComplete((ignored, error) ->
++                Bukkit.getScheduler().runTask(MCPets.getInstance(), () -> {
++                    pending.remove(key);
++                    if (error != null) {
++                        MCPets.getLog().log(Level.WARNING, "Could not remove " + pet.getPermission() + " from " + player.getName() + " to withdraw " + petId, error);
++                        if (player.isOnline())
++                            Language.PET_WITHDRAW_FAILED.sendMessage(player);
++                        return;
++                    }
++                    if (player.isOnline()) {
++                        giveOrDrop(player, voucher);
++                        Language.PET_WITHDRAWN.sendMessageFormatted(player, new FormatArg("%pet%", petName(pet)));
++                    } else {
++                        // The player left before LuckPerms answered, the pet is given back rather than lost
++                        Utils.givePermissionAsync(player.getUniqueId(), pet.getPermission());
++                    }
++                }));
++        return WithdrawResult.WITHDRAWN;
++    }
++
++    /**
++     * Redeem the voucher the player holds in this hand.
++     * Returns false if the item isn't a voucher (nothing was done).
++     */
++    public static boolean redeem(final Player player, final EquipmentSlot hand) {
++        final ItemStack item = player.getInventory().getItem(hand);
++        final String petId = getVoucherPetId(item);
++        if (petId == null)
++            return false;
++
++        final Pet pet = Pet.getFromId(petId);
++        if (pet == null || pet.getPermission() == null) {
++            Language.PET_VOUCHER_INVALID.sendMessage(player);
++            return true;
++        }
++        final FormatArg petArg = new FormatArg("%pet%", petName(pet));
++        if (Utils.hasPermission(player.getUniqueId(), pet.getPermission())) {
++            Language.PET_VOUCHER_ALREADY_OWNED.sendMessageFormatted(player, petArg);
++            return true;
++        }
++        // Without LuckPerms the permission would be lost on the next restart, the voucher is kept
++        if (MCPets.getLuckPerms() == null) {
++            MCPets.getLog().warning("Voucher for " + petId + " can't be redeemed: LuckPerms is needed to give its permission.");
++            Language.PET_WITHDRAW_FAILED.sendMessage(player);
++            return true;
++        }
++
++        final String key = pendingKey(player, petId);
++        if (!pending.add(key))
++            return true;
++
++        // The voucher is used up straight away, and given back if the permission can't be given
++        final ItemStack refund = item.asOne();
++        item.setAmount(item.getAmount() - 1);
++        player.getInventory().setItem(hand, item.getAmount() > 0 ? item : null);
++
++        Utils.givePermissionAsync(player.getUniqueId(), pet.getPermission()).whenComplete((ignored, error) ->
++                Bukkit.getScheduler().runTask(MCPets.getInstance(), () -> {
++                    pending.remove(key);
++                    if (error != null) {
++                        MCPets.getLog().log(Level.WARNING, "Could not give " + pet.getPermission() + " to " + player.getName() + " to redeem " + petId, error);
++                        if (player.isOnline()) {
++                            giveOrDrop(player, refund);
++                            Language.PET_WITHDRAW_FAILED.sendMessage(player);
++                        }
++                        return;
++                    }
++                    if (player.isOnline())
++                        Language.PET_VOUCHER_REDEEMED.sendMessageFormatted(player, petArg);
++                }));
++        return true;
++    }
++
++    private static void giveOrDrop(final Player player, final ItemStack item) {
++        player.getInventory().addItem(item).values()
++                .forEach(left -> player.getWorld().dropItemNaturally(player.getLocation(), left));
++    }
++
++    private static String pendingKey(final Player player, final String petId) {
++        return player.getUniqueId() + ";" + petId;
++    }
++
++    private static String petName(final Pet pet) {
++        final ItemStack icon = pet.getIcon();
++        if (icon != null && icon.hasItemMeta() && icon.getItemMeta().hasDisplayName())
++            return icon.getItemMeta().getDisplayName();
++        return pet.getId();
++    }
++}
+--- /dev/null
++++ b/src/main/java/fr/nocsy/mcpets/listeners/PetVoucherListener.java
+@@ -0,0 +1,24 @@
++package fr.nocsy.mcpets.listeners;
++
++import fr.nocsy.mcpets.data.PetVoucher;
++import org.bukkit.event.EventHandler;
++import org.bukkit.event.EventPriority;
++import org.bukkit.event.Listener;
++import org.bukkit.event.block.Action;
++import org.bukkit.event.player.PlayerInteractEvent;
++
++public class PetVoucherListener implements Listener {
++
++    // Right clicking with a pet voucher redeems it (see PetVoucher)
++    @EventHandler(priority = EventPriority.HIGH)
++    public void redeem(final PlayerInteractEvent e) {
++        if (e.getAction() != Action.RIGHT_CLICK_AIR && e.getAction() != Action.RIGHT_CLICK_BLOCK)
++            return;
++        if (e.getHand() == null || !PetVoucher.isVoucher(e.getItem()))
++            return;
++
++        // The voucher is never placed or used as its base item
++        e.setCancelled(true);
++        PetVoucher.redeem(e.getPlayer(), e.getHand());
++    }
++}
+--- /dev/null
++++ b/src/main/java/fr/nocsy/mcpets/utils/CraftEngineCompat.java
+@@ -0,0 +1,43 @@
++package fr.nocsy.mcpets.utils;
++
++import net.momirealms.craftengine.bukkit.api.CraftEngineItems;
++import net.momirealms.craftengine.bukkit.item.BukkitItemDefinition;
++import org.bukkit.Bukkit;
++import org.bukkit.entity.Player;
++import org.bukkit.inventory.ItemStack;
++import org.jetbrains.annotations.Nullable;
++
++/**
++ * CraftEngine custom items.
++ * CraftEngine is a soft dependency: check isLoaded() before calling anything else here,
++ * so its classes are never touched on a server without it.
++ */
++public final class CraftEngineCompat {
++
++    private CraftEngineCompat() {}
++
++    public static boolean isLoaded() {
++        return Bukkit.getPluginManager().isPluginEnabled("CraftEngine");
++    }
++
++    /**
++     * Build the CraftEngine item with this id (e.g. "pet_vouchers:blaze")
++     * null if CraftEngine isn't loaded or doesn't know the id
++     */
++    @Nullable
++    public static ItemStack buildItem(final String id, @Nullable final Player player) {
++        if (!isLoaded())
++            return null;
++        return Hook.buildItem(id, player);
++    }
++
++    // Kept apart so the CraftEngine classes are only loaded when CraftEngine is there
++    private static final class Hook {
++        private static ItemStack buildItem(final String id, @Nullable final Player player) {
++            final BukkitItemDefinition item = CraftEngineItems.byId(id);
++            if (item == null)
++                return null;
++            return player != null ? item.buildBukkitItem(player) : item.buildBukkitItem();
++        }
++    }
++}

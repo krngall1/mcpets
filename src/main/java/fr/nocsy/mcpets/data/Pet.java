@@ -153,6 +153,16 @@ public class Pet {
 
     @Getter
     @Setter
+    // Can the owner trade the pet in for a voucher item (see PetVoucher)
+    private boolean withdrawable;
+
+    @Getter
+    @Setter
+    // Id of the voucher item, e.g. "minecraft:paper" or a CraftEngine item like "pet_vouchers:blaze"
+    private String withdrawItem;
+
+    @Getter
+    @Setter
     private String tamingProgressSkill;
 
     @Getter
@@ -1830,6 +1840,8 @@ public class Pet {
         pet.setComingBackRange(comingBackRange);
         pet.setDespawnSkill(despawnSkill);
         pet.setLoadSkill(loadSkill);
+        pet.setWithdrawable(withdrawable);
+        pet.setWithdrawItem(withdrawItem);
         pet.setTamingProgressSkill(tamingProgressSkill);
         pet.setTamingOverSkill(tamingOverSkill);
         pet.setMountable(mountable);

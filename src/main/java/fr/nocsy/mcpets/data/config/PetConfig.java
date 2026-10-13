@@ -72,7 +72,7 @@ public class PetConfig extends AbstractConfig {
         reorderKeys("Id", "MythicMob", "Permission", "Distance", "SpawnRange", "ComingBackRange",
                 "Mountable", "MountType", "MountPermission", "DespawnOnDismount", "AutoRide",
                 "Invulnerable", "InventorySize", "UseDefaultMythicMobsName",
-                "DespawnSkill", "SpawnSkill", "LoadSkill", "Taming", "Icon", "Signals", "Levels");
+                "DespawnSkill", "SpawnSkill", "LoadSkill", "Withdrawable", "WithdrawItem", "Taming", "Icon", "Signals", "Levels");
         save();
     }
 
@@ -144,6 +144,8 @@ public class PetConfig extends AbstractConfig {
         final int comingBackRange = getConfig().getInt("ComingBackRange");
         final String despawnSkillName = getConfig().getString("DespawnSkill");
         final String loadSkillName = getConfig().getString("LoadSkill");
+        final boolean withdrawable = getConfig().getBoolean("Withdrawable");
+        final String withdrawItem = getConfig().getString("WithdrawItem");
         final String tamingSkillName = getConfig().getString("Taming.TamingProgressSkill");
         final String tamingOverSkillName = getConfig().getString("Taming.TamingFinishedSkill");
 
@@ -197,6 +199,12 @@ public class PetConfig extends AbstractConfig {
 
         pet.setDespawnSkill(despawnSkillName);
         pet.setLoadSkill(loadSkillName);
+        pet.setWithdrawable(withdrawable);
+        pet.setWithdrawItem(withdrawItem);
+        if (withdrawable && (withdrawItem == null || withdrawItem.isBlank()))
+            MCPets.getLog().warning("Pet " + id + " is Withdrawable but has no WithdrawItem, it can't be withdrawn.");
+        if (withdrawable && PPermission.USE.getPermission().equals(permission))
+            MCPets.getLog().warning("Pet " + id + " is Withdrawable but uses the shared " + permission + " permission, it can't be withdrawn.");
         pet.setTamingProgressSkill(tamingSkillName);
         pet.setTamingOverSkill(tamingOverSkillName);
 

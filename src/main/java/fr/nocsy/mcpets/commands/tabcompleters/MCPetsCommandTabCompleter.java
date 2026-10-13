@@ -3,6 +3,7 @@ package fr.nocsy.mcpets.commands.tabcompleters;
 import fr.nocsy.mcpets.PPermission;
 import fr.nocsy.mcpets.data.Category;
 import fr.nocsy.mcpets.data.Pet;
+import fr.nocsy.mcpets.data.PetVoucher;
 import fr.nocsy.mcpets.data.config.ItemsListConfig;
 import fr.nocsy.mcpets.data.config.PetFoodConfig;
 import fr.nocsy.mcpets.data.livingpets.PetFood;
@@ -39,6 +40,7 @@ public class MCPetsCommandTabCompleter implements TabCompleter {
                 if (args.length == 1) {
                     completed.add("menu");
                     completed.add("name");
+                    completed.add("withdraw");
                 }
                 else if (args.length == 2 && args[0].equalsIgnoreCase("menu")) {
                     completed.addAll(Pet.getActivePetsForOwner(p.getUniqueId())
@@ -46,6 +48,12 @@ public class MCPetsCommandTabCompleter implements TabCompleter {
                             .filter(pet -> !pet.isMountable())
                             .map(Pet::getId)
                             .collect(Collectors.toList()));
+                }
+                else if (args.length == 2 && args[0].equalsIgnoreCase("withdraw")) {
+                    completed.addAll(Pet.getObjectPets().stream()
+                            .filter(pet -> PetVoucher.canWithdraw(pet) && p.hasPermission(pet.getPermission()))
+                            .map(Pet::getId)
+                            .toList());
                 }
 
                 if (!p.hasPermission(PPermission.ADMIN.getPermission()))
