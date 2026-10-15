@@ -30,6 +30,7 @@ public enum PetDespawnReason {
     PETDESPAWN_SKILL("petdespawn skill"),
     AI_TRACK_DESPAWN("AI track could not find the entity"),
     MAX_LIMIT_REACHED("max active pets limit reached"),
+    DIMENSION_RESET("the world it was in was reset"),
     UNKNOWN("unknown");
 
 

@@ -3,6 +3,8 @@ package fr.nocsy.mcpets.data;
 import fr.nocsy.mcpets.MCPets;
 import fr.nocsy.mcpets.utils.debug.Debugger;
 import io.lumine.mythic.core.mobs.ActiveMob;
+import fr.nocsy.mcpets.data.config.FormatArg;
+import fr.nocsy.mcpets.data.config.Language;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -104,6 +106,7 @@ public class PlacedPets {
         if (section == null) return;
 
         final List<Pet> restored = new ArrayList<>();
+        boolean revokedAny = false;
         for (final String petId : section.getKeys(false)) {
             // Still active, e.g. the owner rejoined without a restart
             if (Pet.getActivePetsForOwner(owner).stream().anyMatch(p -> p.getId().equals(petId)))
@@ -125,6 +128,18 @@ public class PlacedPets {
             // Revoked while it couldn't be removed, it's gone for good
             if (RevokedPets.isRevoked(entityId)) continue;
 
+            // Lost the permission while offline (rank change, de-op...), so the pet is removed from the world
+            if (!template.isAllowedFor(player)) {
+                final Entity loaded = Bukkit.getEntity(entityId);
+                if (loaded != null && loaded.isValid())
+                    Pet.removeUntrackedEntity(loaded);
+                else
+                    RevokedPets.add(entityId);
+                revokedAny = true;
+                Language.PET_PERMISSION_LOST.sendMessageFormatted(player, new FormatArg("%pet%", template.getDisplayNameForMessages()));
+                continue;
+            }
+
             final Pet pet = template.copy();
             pet.setOwner(owner);
             final String skinId = data.getString("skin");
@@ -140,6 +155,10 @@ public class PlacedPets {
             restored.add(pet);
         }
 
+        // The revoked pets' spots are forgotten
+        if (revokedAny)
+            save(owner);
+
         // Linked once they're all active again, as relinking saves this file
         for (final Pet pet : restored) {
             final UUID entityId = pet.getEntityId();
@@ -154,6 +173,60 @@ public class PlacedPets {
                 Debugger.send("§7Restored placed pet " + pet.getId() + " of " + player.getName() + ", waiting for its chunk to load");
             }
         }
+    }
+
+    /**
+     * Forget the sitting and wandering pets saved in the given world that MCPets doesn't have in memory,
+     * e.g. pets of owners who haven't joined since a restart. Their entity is removed if it's loaded, else when its chunk loads.
+     * Returns the owner and pet id of each forgotten pet
+     */
+    public static List<Map.Entry<UUID, String>> forgetAllIn(final String worldName) {
+        final YamlConfiguration cfg = get();
+        final List<Map.Entry<UUID, String>> forgotten = new ArrayList<>();
+
+        for (final String ownerKey : new ArrayList<>(cfg.getKeys(false))) {
+            final UUID owner;
+            try {
+                owner = UUID.fromString(ownerKey);
+            } catch (final IllegalArgumentException ex) {
+                continue;
+            }
+            final ConfigurationSection section = cfg.getConfigurationSection(ownerKey);
+            if (section == null) continue;
+
+            for (final String petId : new ArrayList<>(section.getKeys(false))) {
+                if (!worldName.equals(section.getString(petId + ".location.world"))) continue;
+                // Active pets are revoked through Pet.despawn, which keeps this file up to date
+                if (Pet.getActivePetsForOwner(owner).stream().anyMatch(p -> p.getId().equals(petId))) continue;
+
+                try {
+                    final UUID entityId = UUID.fromString(section.getString(petId + ".entity", ""));
+                    final Entity loaded = Bukkit.getEntity(entityId);
+                    if (loaded != null && loaded.isValid())
+                        Pet.removeUntrackedEntity(loaded);
+                    else
+                        RevokedPets.add(entityId);
+                } catch (final IllegalArgumentException ignored) {
+                    // No entity saved, there's nothing to remove
+                }
+                cfg.set(ownerKey + "." + petId, null);
+                forgotten.add(Map.entry(owner, petId));
+            }
+            final ConfigurationSection left = cfg.getConfigurationSection(ownerKey);
+            if (left != null && left.getKeys(false).isEmpty())
+                cfg.set(ownerKey, null);
+        }
+
+        if (!forgotten.isEmpty())
+            write();
+        return forgotten;
+    }
+
+    /**
+     * The world a sitting or wandering pet was saved in, or null
+     */
+    public static String getWorldName(final UUID owner, final String petId) {
+        return get().getString(owner + "." + petId + ".location.world");
     }
 
     private static void setLocation(final YamlConfiguration cfg, final String path, final Location loc) {

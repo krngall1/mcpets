@@ -943,13 +943,15 @@ public class Pet {
         // Set the owner
         this.owner = owner;
 
-        // Set the MythicMob owner with a delay so it will not conflict with ModelEngine
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                if (activeMob != null) activeMob.setOwnerUUID(owner);
-            }
-        }.runTaskLater(MCPets.getInstance(), 1L);
+        // Set the MythicMob owner with a delay so it will not conflict with ModelEngine (only if SetMythicMobsOwner is on)
+        if (GlobalConfig.getInstance().isMythicMobsOwner()) {
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    if (activeMob != null) activeMob.setOwnerUUID(owner);
+                }
+            }.runTaskLater(MCPets.getInstance(), 1L);
+        }
 
         // Follow up the owner ?
         this.aiMode = aiMode;
@@ -1327,6 +1329,13 @@ public class Pet {
             @Override
             public void run() {
 
+                // A pet without an owner has nothing to follow or check (Bukkit.getPlayer(null) throws every run)
+                if (owner == null) {
+                    Debugger.send("§6[AiManager] : §cPet " + getId() + " has no owner, its AI is stopped.");
+                    stopAI();
+                    return;
+                }
+
                 final Player p = Bukkit.getPlayer(owner);
                 if (p == null && aiMode == PetAIMode.FOLLOW) {
                     getInstance().despawn(PetDespawnReason.OWNER_NOT_HERE);
@@ -1337,6 +1346,14 @@ public class Pet {
                 if (p != null && p.isDead())
                     return;
 
+                // Checked before the unloaded chunk skip below, so pets sitting far away are revoked too
+                final String permission = getInstance().getPermission();
+                if (p != null && getInstance().isCheckPermission() && (permission == null || !p.hasPermission(permission))) {
+                    Debugger.send("§6[AiManager] : §cPet " + getId() + " revoked because the owner doesn't have permission");
+                    getInstance().revokeForLostPermission(p);
+                    return;
+                }
+
                 // A sitting or wandering pet whose chunk is unloaded is still out, it's relinked when its chunk loads
                 if (aiMode != PetAIMode.FOLLOW && !removed && activeMob != null && activeMob.getEntity() != null
                         && activeMob.getEntity().getBukkitEntity() != null
@@ -1346,14 +1363,6 @@ public class Pet {
                 if (!getInstance().isStillHere()) {
                     Debugger.send("§6[AiManager] : §cPet " + getId() + " is not here, so it gets despawned.");
                     getInstance().despawn(PetDespawnReason.AI_TRACK_DESPAWN);
-                    stopAI();
-                    return;
-                }
-
-                final String permission = getInstance().getPermission();
-                if (p != null && getInstance().isCheckPermission() && (permission == null || !p.hasPermission(permission))) {
-                    Debugger.send("§6[AiManager] : §cPet " + getId() + " despawned because the owner doesn't have permission");
-                    getInstance().despawn(PetDespawnReason.DONT_HAVE_PERM);
                     stopAI();
                     return;
                 }
@@ -1548,6 +1557,33 @@ public class Pet {
     }
 
     /**
+     * Can this player have this pet out (its permission, unless the pet doesn't check it)?
+     */
+    public boolean isAllowedFor(final Player p) {
+        return !checkPermission || (permission != null && p.hasPermission(permission));
+    }
+
+    /**
+     * The owner lost the permission for this pet (rank change, de-op, withdrawn...), so it's put away for good:
+     * it's despawned, forgotten for restarts and placed pets, and the owner is told why
+     */
+    public void revokeForLostPermission(final Player ownerPlayer) {
+        despawn(PetDespawnReason.DONT_HAVE_PERM);
+        if (ownerPlayer != null)
+            Language.PET_PERMISSION_LOST.sendMessageFormatted(ownerPlayer, new FormatArg("%pet%", getDisplayNameForMessages()));
+    }
+
+    /**
+     * The pet's name as shown in its icon, or its id
+     */
+    public String getDisplayNameForMessages() {
+        final ItemStack icon = getIcon();
+        if (icon != null && icon.hasItemMeta() && icon.getItemMeta().hasDisplayName())
+            return icon.getItemMeta().getDisplayName();
+        return id;
+    }
+
+    /**
      * Despawn the pet
      */
     public boolean despawn(final PetDespawnReason reason) {
@@ -1652,8 +1688,9 @@ public class Pet {
         if (reason == PetDespawnReason.REVOKE || reason == PetDespawnReason.DISMOUNT || reason == PetDespawnReason.UNKNOWN) {
             pd.setLastActivePets(new ArrayList<>());
             pd.save();
-        } else if (reason == PetDespawnReason.REPLACED) {
-            // Replaced by a new pet, so only this one is forgotten
+        } else if (reason == PetDespawnReason.REPLACED || reason == PetDespawnReason.DONT_HAVE_PERM
+                || reason == PetDespawnReason.DIMENSION_RESET) {
+            // Replaced by a new pet, no longer allowed or its world was reset, so only this one is forgotten
             pd.removeLastActivePet(id);
             pd.save();
         }

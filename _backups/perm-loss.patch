@@ -1,0 +1,199 @@
+--- a/src/main/java/fr/nocsy/mcpets/data/Pet.java	2026-10-13 10:52:42.744126490 +0000
++++ b/src/main/java/fr/nocsy/mcpets/data/Pet.java	2026-10-13 10:53:27.333952525 +0000
+@@ -1327,6 +1327,13 @@
+             @Override
+             public void run() {
+ 
++                // A pet without an owner has nothing to follow or check (Bukkit.getPlayer(null) throws every run)
++                if (owner == null) {
++                    Debugger.send("§6[AiManager] : §cPet " + getId() + " has no owner, its AI is stopped.");
++                    stopAI();
++                    return;
++                }
++
+                 final Player p = Bukkit.getPlayer(owner);
+                 if (p == null && aiMode == PetAIMode.FOLLOW) {
+                     getInstance().despawn(PetDespawnReason.OWNER_NOT_HERE);
+@@ -1337,6 +1344,14 @@
+                 if (p != null && p.isDead())
+                     return;
+ 
++                // Checked before the unloaded chunk skip below, so pets sitting far away are revoked too
++                final String permission = getInstance().getPermission();
++                if (p != null && getInstance().isCheckPermission() && (permission == null || !p.hasPermission(permission))) {
++                    Debugger.send("§6[AiManager] : §cPet " + getId() + " revoked because the owner doesn't have permission");
++                    getInstance().revokeForLostPermission(p);
++                    return;
++                }
++
+                 // A sitting or wandering pet whose chunk is unloaded is still out, it's relinked when its chunk loads
+                 if (aiMode != PetAIMode.FOLLOW && !removed && activeMob != null && activeMob.getEntity() != null
+                         && activeMob.getEntity().getBukkitEntity() != null
+@@ -1350,14 +1365,6 @@
+                     return;
+                 }
+ 
+-                final String permission = getInstance().getPermission();
+-                if (p != null && getInstance().isCheckPermission() && (permission == null || !p.hasPermission(permission))) {
+-                    Debugger.send("§6[AiManager] : §cPet " + getId() + " despawned because the owner doesn't have permission");
+-                    getInstance().despawn(PetDespawnReason.DONT_HAVE_PERM);
+-                    stopAI();
+-                    return;
+-                }
+-
+                 final Location petLoc = getInstance().getActiveMob().getEntity().getBukkitEntity().getLocation();
+                 lastKnownLocation = petLoc;
+ 
+@@ -1548,6 +1555,33 @@
+     }
+ 
+     /**
++     * Can this player have this pet out (its permission, unless the pet doesn't check it)?
++     */
++    public boolean isAllowedFor(final Player p) {
++        return !checkPermission || (permission != null && p.hasPermission(permission));
++    }
++
++    /**
++     * The owner lost the permission for this pet (rank change, de-op, withdrawn...), so it's put away for good:
++     * it's despawned, forgotten for restarts and placed pets, and the owner is told why
++     */
++    public void revokeForLostPermission(final Player ownerPlayer) {
++        despawn(PetDespawnReason.DONT_HAVE_PERM);
++        if (ownerPlayer != null)
++            Language.PET_PERMISSION_LOST.sendMessageFormatted(ownerPlayer, new FormatArg("%pet%", getDisplayNameForMessages()));
++    }
++
++    /**
++     * The pet's name as shown in its icon, or its id
++     */
++    public String getDisplayNameForMessages() {
++        final ItemStack icon = getIcon();
++        if (icon != null && icon.hasItemMeta() && icon.getItemMeta().hasDisplayName())
++            return icon.getItemMeta().getDisplayName();
++        return id;
++    }
++
++    /**
+      * Despawn the pet
+      */
+     public boolean despawn(final PetDespawnReason reason) {
+@@ -1652,8 +1686,8 @@
+         if (reason == PetDespawnReason.REVOKE || reason == PetDespawnReason.DISMOUNT || reason == PetDespawnReason.UNKNOWN) {
+             pd.setLastActivePets(new ArrayList<>());
+             pd.save();
+-        } else if (reason == PetDespawnReason.REPLACED) {
+-            // Replaced by a new pet, so only this one is forgotten
++        } else if (reason == PetDespawnReason.REPLACED || reason == PetDespawnReason.DONT_HAVE_PERM) {
++            // Replaced by a new pet, or no longer allowed, so only this one is forgotten
+             pd.removeLastActivePet(id);
+             pd.save();
+         }
+--- a/src/main/java/fr/nocsy/mcpets/data/config/Language.java	2026-10-13 10:52:42.754990282 +0000
++++ b/src/main/java/fr/nocsy/mcpets/data/config/Language.java	2026-10-13 10:52:57.459099709 +0000
+@@ -166,6 +166,7 @@
+     PET_WITHDRAW_NOT_OWNED("§cYou don't own this pet."),
+     PET_WITHDRAW_FROM_RANK("§cThis pet comes with your rank and can't be withdrawn."),
+     PET_WITHDRAW_FAILED("§cThis pet couldn't be withdrawn, please tell an admin."),
++    PET_PERMISSION_LOST("§c%pet% was put away because you no longer have access to it."),
+     PET_VOUCHER_REDEEMED("§a%pet% is now yours!"),
+     PET_VOUCHER_ALREADY_OWNED("§cYou already own %pet%."),
+     PET_VOUCHER_INVALID("§cThis voucher's pet doesn't exist anymore."),
+--- a/src/main/java/fr/nocsy/mcpets/listeners/PetListener.java	2026-10-13 10:52:42.769125984 +0000
++++ b/src/main/java/fr/nocsy/mcpets/listeners/PetListener.java	2026-10-13 10:53:27.342155608 +0000
+@@ -31,6 +31,7 @@
+ import fr.nocsy.mcpets.data.sql.PlayerData;
+ import fr.nocsy.mcpets.utils.debug.Debugger;
+ import fr.nocsy.mcpets.events.PetSpawnEvent;
++import fr.nocsy.mcpets.data.config.FormatArg;
+ import fr.nocsy.mcpets.data.config.Language;
+ import fr.nocsy.mcpets.data.flags.FlagsManager;
+ import fr.nocsy.mcpets.data.livingpets.PetFood;
+@@ -266,8 +267,9 @@
+                 Pet pet = Pet.getFromId(PlayerData.decodeActivePetId(stored));
+                 if (pet == null) return;
+ 
+-                if (!p.hasPermission(pet.getPermission())) {
++                if (!pet.isAllowedFor(p)) {
+                     reconnectionPets.remove(uuid);
++                    Language.PET_PERMISSION_LOST.sendMessageFormatted(p, new FormatArg("%pet%", pet.getDisplayNameForMessages()));
+                     return;
+                 }
+                 if (pet.getAiMode() == PetAIMode.FOLLOW) {
+@@ -282,10 +284,18 @@
+             else if (GlobalConfig.getInstance().isSpawnPetAfterServerRestart()) {
+                 PlayerData pd = PlayerData.get(uuid);
+                 List<String> storedPets = List.copyOf(pd.getLastActivePets());
++                boolean forgotPets = false;
+                 for (String stored : new ArrayList<>(storedPets)) {
+                     String lastPetId = PlayerData.decodeActivePetId(stored);
+                     if (lastPetId != null && !lastPetId.isEmpty()) {
+                         Pet pet = Pet.getFromId(lastPetId);
++                        // Lost the permission while offline (rank change, de-op...), so the pet doesn't come back
++                        if (pet != null && !pet.isAllowedFor(p)) {
++                            pd.removeLastActivePet(lastPetId);
++                            forgotPets = true;
++                            Language.PET_PERMISSION_LOST.sendMessageFormatted(p, new FormatArg("%pet%", pet.getDisplayNameForMessages()));
++                            continue;
++                        }
+                         if (pet != null) {
+                             PetAIMode aiMode = PetAIMode.valueOf(PlayerData.decodeActiveAI(stored));
+                             pet = pet.copy();
+@@ -296,6 +306,8 @@
+                         }
+                     }
+                 }
++                if (forgotPets)
++                    pd.save();
+             }
+         }, 20L);
+     }
+--- a/src/main/java/fr/nocsy/mcpets/data/PlacedPets.java	2026-10-13 10:52:42.777129278 +0000
++++ b/src/main/java/fr/nocsy/mcpets/data/PlacedPets.java	2026-10-13 10:53:27.350114362 +0000
+@@ -3,6 +3,8 @@
+ import fr.nocsy.mcpets.MCPets;
+ import fr.nocsy.mcpets.utils.debug.Debugger;
+ import io.lumine.mythic.core.mobs.ActiveMob;
++import fr.nocsy.mcpets.data.config.FormatArg;
++import fr.nocsy.mcpets.data.config.Language;
+ import org.bukkit.Bukkit;
+ import org.bukkit.Location;
+ import org.bukkit.World;
+@@ -104,6 +106,7 @@
+         if (section == null) return;
+ 
+         final List<Pet> restored = new ArrayList<>();
++        boolean revokedAny = false;
+         for (final String petId : section.getKeys(false)) {
+             // Still active, e.g. the owner rejoined without a restart
+             if (Pet.getActivePetsForOwner(owner).stream().anyMatch(p -> p.getId().equals(petId)))
+@@ -125,6 +128,18 @@
+             // Revoked while it couldn't be removed, it's gone for good
+             if (RevokedPets.isRevoked(entityId)) continue;
+ 
++            // Lost the permission while offline (rank change, de-op...), so the pet is removed from the world
++            if (!template.isAllowedFor(player)) {
++                final Entity loaded = Bukkit.getEntity(entityId);
++                if (loaded != null && loaded.isValid())
++                    Pet.removeUntrackedEntity(loaded);
++                else
++                    RevokedPets.add(entityId);
++                revokedAny = true;
++                Language.PET_PERMISSION_LOST.sendMessageFormatted(player, new FormatArg("%pet%", template.getDisplayNameForMessages()));
++                continue;
++            }
++
+             final Pet pet = template.copy();
+             pet.setOwner(owner);
+             final String skinId = data.getString("skin");
+@@ -140,6 +155,10 @@
+             restored.add(pet);
+         }
+ 
++        // The revoked pets' spots are forgotten
++        if (revokedAny)
++            save(owner);
++
+         // Linked once they're all active again, as relinking saves this file
+         for (final Pet pet : restored) {
+             final UUID entityId = pet.getEntityId();

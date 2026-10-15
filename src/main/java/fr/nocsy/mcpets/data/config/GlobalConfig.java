@@ -123,6 +123,8 @@ public class GlobalConfig extends AbstractConfig {
     @Getter
     private boolean disableFastMountWhileHoldingSignalStick;
     @Getter
+    private boolean mythicMobsOwner;
+    @Getter
     private boolean spawnPetAfterServerRestart;
 
     @Getter
@@ -236,6 +238,10 @@ public class GlobalConfig extends AbstractConfig {
             getConfig().set("FastMount", false);
         if  (getConfig().get("DisableFastMountWhileHoldingSignalStick") == null)
             getConfig().set("DisableFastMountWhileHoldingSignalStick", false);
+        // Whether the owner is also set as the MythicMobs owner of the pet. MCPets itself never needs it, and MythicMobs
+        // then blocks the pet's damage{} mechanics on its owner and makes @owner / <caster.owner.*> available.
+        if (getConfig().get("SetMythicMobsOwner") == null)
+            getConfig().set("SetMythicMobsOwner", false);
         if (getConfig().get("SpawnPetAfterServerRestart") == null)
             getConfig().set("SpawnPetAfterServerRestart", true);
         // MaxActivePets became MaxNonFollowingPets, the old value is kept
@@ -328,6 +334,7 @@ public class GlobalConfig extends AbstractConfig {
 
         fastMount = getConfig().getBoolean("FastMount");
         disableFastMountWhileHoldingSignalStick = getConfig().getBoolean("DisableFastMountWhileHoldingSignalStick");
+        mythicMobsOwner = getConfig().getBoolean("SetMythicMobsOwner");
 
         velocityEnabled = getConfig().getBoolean("Velocity.Enabled");
         velocitySwitchWindow = Math.max(5, Math.min(300, getConfig().getInt("Velocity.SwitchWindow")));

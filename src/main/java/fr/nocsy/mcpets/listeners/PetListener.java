@@ -31,6 +31,7 @@ import fr.nocsy.mcpets.data.sql.Databases;
 import fr.nocsy.mcpets.data.sql.PlayerData;
 import fr.nocsy.mcpets.utils.debug.Debugger;
 import fr.nocsy.mcpets.events.PetSpawnEvent;
+import fr.nocsy.mcpets.data.config.FormatArg;
 import fr.nocsy.mcpets.data.config.Language;
 import fr.nocsy.mcpets.data.flags.FlagsManager;
 import fr.nocsy.mcpets.data.livingpets.PetFood;
@@ -52,7 +53,8 @@ import io.lumine.mythic.bukkit.events.MythicMobDespawnEvent;
 
 public class PetListener implements Listener {
 
-    private final Map<UUID, String> reconnectionPets = new HashMap<>();
+    // Every pet the player had out when they left, so all their following pets come back on rejoin
+    private final Map<UUID, List<String>> reconnectionPets = new HashMap<>();
 
     @EventHandler
     public void interact(PlayerInteractEntityEvent e) {
@@ -161,6 +163,7 @@ public class PetListener implements Listener {
         Map<String, String> activeSkinIds = new HashMap<>();
         PlayerData.get(uuid).setLastActivePets(new ArrayList<>());
         PlayerData.get(uuid).save();
+        reconnectionPets.remove(uuid);
         // Create a copy to avoid ConcurrentModificationException when despawning modifies the list
         List<Pet> pets = Pet.getActivePetsForOwner(uuid);
         for (Pet pet : new ArrayList<>(pets)) {
@@ -170,7 +173,7 @@ public class PetListener implements Listener {
             if (p.hasPermission(pet.getPermission())) {
                 String encoded = PlayerData.encodeActivePet(pet.getId(), pet.getAiMode(),
                         activeSkin != null ? activeSkin.getPathId() : null);
-                reconnectionPets.putIfAbsent(uuid, encoded);
+                reconnectionPets.computeIfAbsent(uuid, k -> new ArrayList<>()).add(encoded);
                 activePetIds.add(pet.getId());
                 if (activeSkin != null) {
                     activeSkinIds.put(pet.getId(), activeSkin.getPathId());
@@ -262,32 +265,40 @@ public class PetListener implements Listener {
 
             // Velocity disabled: use the local reconnection map (original behavior).
             if (reconnectionPets.containsKey(uuid)) {
-                String stored = reconnectionPets.get(uuid);
-                Pet pet = Pet.getFromId(PlayerData.decodeActivePetId(stored));
-                if (pet == null) return;
+                // Sitting and wandering pets were restored above, only the following ones are respawned here
+                for (String stored : reconnectionPets.remove(uuid)) {
+                    if (decodeMode(stored) != PetAIMode.FOLLOW) continue;
+                    Pet pet = Pet.getFromId(PlayerData.decodeActivePetId(stored));
+                    if (pet == null) continue;
 
-                if (!p.hasPermission(pet.getPermission())) {
-                    reconnectionPets.remove(uuid);
-                    return;
-                }
-                if (pet.getAiMode() == PetAIMode.FOLLOW) {
+                    if (!pet.isAllowedFor(p)) {
+                        Language.PET_PERMISSION_LOST.sendMessageFormatted(p, new FormatArg("%pet%", pet.getDisplayNameForMessages()));
+                        continue;
+                    }
                     pet = pet.copy();
                     pet.setCheckPermission(false);
                     pet.setOwner(uuid);
                     restoreSkin(p, pet, PlayerData.decodeActiveSkinId(stored));
                     pet.spawn(p.getLocation(), true);
                 }
-                reconnectionPets.remove(uuid);
             }
             else if (GlobalConfig.getInstance().isSpawnPetAfterServerRestart()) {
                 PlayerData pd = PlayerData.get(uuid);
                 List<String> storedPets = List.copyOf(pd.getLastActivePets());
+                boolean forgotPets = false;
                 for (String stored : new ArrayList<>(storedPets)) {
                     String lastPetId = PlayerData.decodeActivePetId(stored);
                     if (lastPetId != null && !lastPetId.isEmpty()) {
                         Pet pet = Pet.getFromId(lastPetId);
+                        // Lost the permission while offline (rank change, de-op...), so the pet doesn't come back
+                        if (pet != null && !pet.isAllowedFor(p)) {
+                            pd.removeLastActivePet(lastPetId);
+                            forgotPets = true;
+                            Language.PET_PERMISSION_LOST.sendMessageFormatted(p, new FormatArg("%pet%", pet.getDisplayNameForMessages()));
+                            continue;
+                        }
                         if (pet != null) {
-                            PetAIMode aiMode = PetAIMode.valueOf(PlayerData.decodeActiveAI(stored));
+                            PetAIMode aiMode = decodeMode(stored);
                             pet = pet.copy();
                             pet.setCheckPermission(false);
                             pet.setOwner(uuid);
@@ -296,8 +307,21 @@ public class PetListener implements Listener {
                         }
                     }
                 }
+                if (forgotPets)
+                    pd.save();
             }
         }, 20L);
+    }
+
+    /**
+     * The mode saved with an active pet. Entries saved before modes existed ("petId" or "petId:skin") are following pets
+     */
+    private static PetAIMode decodeMode(String stored) {
+        try {
+            return PetAIMode.valueOf(PlayerData.decodeActiveAI(stored).toUpperCase());
+        } catch (RuntimeException ex) {
+            return PetAIMode.FOLLOW;
+        }
     }
 
     private void restoreSkin(Player p, Pet pet, String skinPathId) {

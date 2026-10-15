@@ -1,0 +1,225 @@
+--- a/src/main/java/fr/nocsy/mcpets/data/Pet.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Pet.java
+@@ -1688,8 +1688,9 @@
+         if (reason == PetDespawnReason.REVOKE || reason == PetDespawnReason.DISMOUNT || reason == PetDespawnReason.UNKNOWN) {
+             pd.setLastActivePets(new ArrayList<>());
+             pd.save();
+-        } else if (reason == PetDespawnReason.REPLACED || reason == PetDespawnReason.DONT_HAVE_PERM) {
+-            // Replaced by a new pet, or no longer allowed, so only this one is forgotten
++        } else if (reason == PetDespawnReason.REPLACED || reason == PetDespawnReason.DONT_HAVE_PERM
++                || reason == PetDespawnReason.DIMENSION_RESET) {
++            // Replaced by a new pet, no longer allowed or its world was reset, so only this one is forgotten
+             pd.removeLastActivePet(id);
+             pd.save();
+         }
+--- a/src/main/java/fr/nocsy/mcpets/data/PetDespawnReason.java
++++ b/src/main/java/fr/nocsy/mcpets/data/PetDespawnReason.java
+@@ -30,6 +30,7 @@
+     PETDESPAWN_SKILL("petdespawn skill"),
+     AI_TRACK_DESPAWN("AI track could not find the entity"),
+     MAX_LIMIT_REACHED("max active pets limit reached"),
++    DIMENSION_RESET("the world it was in was reset"),
+     UNKNOWN("unknown");
+ 
+ 
+--- a/src/main/java/fr/nocsy/mcpets/data/PlacedPets.java
++++ b/src/main/java/fr/nocsy/mcpets/data/PlacedPets.java
+@@ -175,6 +175,60 @@
+         }
+     }
+ 
++    /**
++     * Forget the sitting and wandering pets saved in the given world that MCPets doesn't have in memory,
++     * e.g. pets of owners who haven't joined since a restart. Their entity is removed if it's loaded, else when its chunk loads.
++     * Returns the owner and pet id of each forgotten pet
++     */
++    public static List<Map.Entry<UUID, String>> forgetAllIn(final String worldName) {
++        final YamlConfiguration cfg = get();
++        final List<Map.Entry<UUID, String>> forgotten = new ArrayList<>();
++
++        for (final String ownerKey : new ArrayList<>(cfg.getKeys(false))) {
++            final UUID owner;
++            try {
++                owner = UUID.fromString(ownerKey);
++            } catch (final IllegalArgumentException ex) {
++                continue;
++            }
++            final ConfigurationSection section = cfg.getConfigurationSection(ownerKey);
++            if (section == null) continue;
++
++            for (final String petId : new ArrayList<>(section.getKeys(false))) {
++                if (!worldName.equals(section.getString(petId + ".location.world"))) continue;
++                // Active pets are revoked through Pet.despawn, which keeps this file up to date
++                if (Pet.getActivePetsForOwner(owner).stream().anyMatch(p -> p.getId().equals(petId))) continue;
++
++                try {
++                    final UUID entityId = UUID.fromString(section.getString(petId + ".entity", ""));
++                    final Entity loaded = Bukkit.getEntity(entityId);
++                    if (loaded != null && loaded.isValid())
++                        Pet.removeUntrackedEntity(loaded);
++                    else
++                        RevokedPets.add(entityId);
++                } catch (final IllegalArgumentException ignored) {
++                    // No entity saved, there's nothing to remove
++                }
++                cfg.set(ownerKey + "." + petId, null);
++                forgotten.add(Map.entry(owner, petId));
++            }
++            final ConfigurationSection left = cfg.getConfigurationSection(ownerKey);
++            if (left != null && left.getKeys(false).isEmpty())
++                cfg.set(ownerKey, null);
++        }
++
++        if (!forgotten.isEmpty())
++            write();
++        return forgotten;
++    }
++
++    /**
++     * The world a sitting or wandering pet was saved in, or null
++     */
++    public static String getWorldName(final UUID owner, final String petId) {
++        return get().getString(owner + "." + petId + ".location.world");
++    }
++
+     private static void setLocation(final YamlConfiguration cfg, final String path, final Location loc) {
+         cfg.set(path + ".world", loc.getWorld().getName());
+         cfg.set(path + ".x", loc.getX());
+--- a/src/main/java/fr/nocsy/mcpets/data/config/Language.java
++++ b/src/main/java/fr/nocsy/mcpets/data/config/Language.java
+@@ -167,6 +167,8 @@
+     PET_WITHDRAW_FROM_RANK("§cThis pet comes with your rank and can't be withdrawn."),
+     PET_WITHDRAW_FAILED("§cThis pet couldn't be withdrawn, please tell an admin."),
+     PET_PERMISSION_LOST("§c%pet% was put away because you no longer have access to it."),
++    PET_REVOKED_DIMENSION_RESET("§cYour pet %pet% was revoked due to dimension reset"),
++    REVOKE_ALL_DONE("§a%count% sitting or wandering pets were revoked in %world%."),
+     PET_VOUCHER_REDEEMED("§a%pet% is now yours!"),
+     PET_VOUCHER_ALREADY_OWNED("§cYou already own %pet%."),
+     PET_VOUCHER_INVALID("§cThis voucher's pet doesn't exist anymore."),
+--- a/src/main/java/fr/nocsy/mcpets/commands/mcpets/MCPetsCommand.java
++++ b/src/main/java/fr/nocsy/mcpets/commands/mcpets/MCPetsCommand.java
+@@ -56,6 +56,7 @@
+                     new ArgumentPetFood(sender, args),
+                     new ArgumentReload(sender, args),
+                     new ArgumentRevoke(sender, args),
++                    new ArgumentRevokeAll(sender, args),
+                     new ArgumentSignalStick(sender, args),
+                     new ArgumentSpawn(sender, args),
+                     new ArgumentWithdraw(sender, args),
+--- a/src/main/java/fr/nocsy/mcpets/commands/tabcompleters/MCPetsCommandTabCompleter.java
++++ b/src/main/java/fr/nocsy/mcpets/commands/tabcompleters/MCPetsCommandTabCompleter.java
+@@ -69,6 +69,7 @@
+                     completed.add("open");
+                     completed.add("inventory");
+                     completed.add("revoke");
++                    completed.add("revokeAll");
+                     completed.add("signalstick");
+                     completed.add("item");
+                     completed.add("clearStats");
+@@ -96,6 +97,9 @@
+                             completed.addAll(Bukkit.getOnlinePlayers().stream().map(Player::getName).toList());
+                             completed.addAll(Pet.getObjectPets().stream().map(Pet::getId).toList());
+                             break;
++                        case "revokeall":
++                            completed.addAll(Bukkit.getWorlds().stream().map(org.bukkit.World::getName).toList());
++                            break;
+                         case "petfood":
+                             completed.addAll(PetFoodConfig.getInstance().list().stream().map(PetFood::getId).toList());
+                             break;
+--- /dev/null
++++ b/src/main/java/fr/nocsy/mcpets/commands/mcpets/ArgumentRevokeAll.java
+@@ -0,0 +1,94 @@
++package fr.nocsy.mcpets.commands.mcpets;
++
++import fr.nocsy.mcpets.PPermission;
++import fr.nocsy.mcpets.commands.AArgument;
++import fr.nocsy.mcpets.data.Pet;
++import fr.nocsy.mcpets.data.PetAIMode;
++import fr.nocsy.mcpets.data.PetDespawnReason;
++import fr.nocsy.mcpets.data.PlacedPets;
++import fr.nocsy.mcpets.data.config.FormatArg;
++import fr.nocsy.mcpets.data.config.Language;
++import net.kyori.adventure.text.Component;
++import net.kyori.adventure.text.TextReplacementConfig;
++import org.bukkit.Bukkit;
++import org.bukkit.Location;
++import org.bukkit.command.CommandSender;
++import org.bukkit.entity.Player;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++/**
++ * /mcpets revokeAll <world>
++ * Revokes every sitting and wandering pet in the given world, e.g. before or after a resource world is reset.
++ * Following pets aren't touched, they come back with their owner.
++ */
++public class ArgumentRevokeAll extends AArgument {
++
++    public ArgumentRevokeAll(CommandSender sender, String[] args) {
++        super("revokeAll", new int[]{2}, sender, args, "/mcpets revokeAll <world>");
++    }
++
++    @Override
++    public void commandEffect() {
++        final String worldName = args[1];
++        int count = 0;
++
++        final List<Pet> pets = new ArrayList<>();
++        for (final List<Pet> ownerPets : Pet.getActivePets().values())
++            pets.addAll(ownerPets);
++
++        for (final Pet pet : pets) {
++            if (pet.getAiMode() != PetAIMode.SIT && pet.getAiMode() != PetAIMode.WANDER) continue;
++            if (!worldName.equals(getWorldName(pet))) continue;
++
++            final UUID owner = pet.getOwner();
++            final Component name = pet.getNameForMessages();
++            pet.despawn(PetDespawnReason.DIMENSION_RESET);
++            notifyOwner(owner, name);
++            count++;
++        }
++
++        // Pets MCPets doesn't have in memory, e.g. of owners who haven't joined since a restart
++        for (final Map.Entry<UUID, String> forgotten : PlacedPets.forgetAllIn(worldName)) {
++            final Pet template = Pet.getFromId(forgotten.getValue());
++            notifyOwner(forgotten.getKey(), template != null ? template.getNameForMessages() : Component.text(forgotten.getValue()));
++            count++;
++        }
++
++        Language.REVOKE_ALL_DONE.sendMessageFormatted(sender,
++                new FormatArg("%count%", count),
++                new FormatArg("%world%", worldName));
++    }
++
++    /**
++     * The world the pet is in, or the one it was saved in if its world isn't loaded anymore
++     */
++    private static String getWorldName(final Pet pet) {
++        try {
++            final Location loc = pet.getLocation();
++            if (loc != null && loc.getWorld() != null)
++                return loc.getWorld().getName();
++        } catch (final IllegalArgumentException ignored) {
++            // The world was unloaded, e.g. it's being reset
++        }
++        return pet.getOwner() != null ? PlacedPets.getWorldName(pet.getOwner(), pet.getId()) : null;
++    }
++
++    private static void notifyOwner(final UUID owner, final Component name) {
++        if (owner == null || Language.PET_REVOKED_DIMENSION_RESET.getMessage().isEmpty()) return;
++        final Player player = Bukkit.getPlayer(owner);
++        if (player == null) return;
++        player.sendMessage(Language.PET_REVOKED_DIMENSION_RESET.getComponentWithPrefix().replaceText(TextReplacementConfig.builder()
++                .matchLiteral("%pet%")
++                .replacement(name)
++                .build()));
++    }
++
++    @Override
++    protected boolean additionalConditions() {
++        return sender.hasPermission(PPermission.ADMIN.getPermission());
++    }
++}

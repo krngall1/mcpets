@@ -1,5 +1,7 @@
 package fr.nocsy.mcpets.mythicmobs.mechanics;
 
+import org.bukkit.Bukkit;
+import fr.nocsy.mcpets.MCPets;
 import fr.nocsy.mcpets.data.PetAIMode;
 import fr.nocsy.mcpets.data.config.GlobalConfig;
 import org.bukkit.entity.Entity;
@@ -37,6 +39,16 @@ public class PetAIModeMechanic extends SkillMechanic implements ITargetedEntityS
 
     @Override
     public SkillResult castAtEntity(SkillMetadata data, AbstractEntity target) {
+        // MythicMobs can run this off the main thread (e.g. after a delay in a skill). Saving pet data and
+        // touching entities there isn't safe: several pets saving at once throws a ConcurrentModificationException
+        if (!Bukkit.isPrimaryThread()) {
+            Bukkit.getScheduler().runTask(MCPets.getInstance(), () -> castOnMainThread(data, target));
+            return SkillResult.SUCCESS;
+        }
+        return castOnMainThread(data, target);
+    }
+
+    private SkillResult castOnMainThread(SkillMetadata data, AbstractEntity target) {
         Entity entity = BukkitAdapter.adapt(target);
 
         Pet pet = Pet.getFromEntity(entity);

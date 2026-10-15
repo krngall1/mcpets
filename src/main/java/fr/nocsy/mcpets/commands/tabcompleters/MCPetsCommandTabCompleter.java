@@ -69,6 +69,7 @@ public class MCPetsCommandTabCompleter implements TabCompleter {
                     completed.add("open");
                     completed.add("inventory");
                     completed.add("revoke");
+                    completed.add("revokeAll");
                     completed.add("signalstick");
                     completed.add("item");
                     completed.add("clearStats");
@@ -95,6 +96,9 @@ public class MCPetsCommandTabCompleter implements TabCompleter {
                         case "clearstats":
                             completed.addAll(Bukkit.getOnlinePlayers().stream().map(Player::getName).toList());
                             completed.addAll(Pet.getObjectPets().stream().map(Pet::getId).toList());
+                            break;
+                        case "revokeall":
+                            completed.addAll(Bukkit.getWorlds().stream().map(org.bukkit.World::getName).toList());
                             break;
                         case "petfood":
                             completed.addAll(PetFoodConfig.getInstance().list().stream().map(PetFood::getId).toList());
