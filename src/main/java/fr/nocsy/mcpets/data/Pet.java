@@ -1210,14 +1210,20 @@ public class Pet {
     }
 
     /**
-     * The pet's mode for its menu icon, e.g. "Sitting at: x: 10 y: 64 z: -3"
+     * The spot shown for the pet's mode: a wandering pet's home, else where the pet is
+     */
+    public Location getModeLocation() {
+        return aiMode == PetAIMode.WANDER && wanderCenter != null ? wanderCenter : getLocation();
+    }
+
+    /**
+     * The pet's mode for its menu, e.g. "Sitting at: x: 10 y: 64 z: -3"
      */
     public Component getModeLore() {
         if (aiMode != PetAIMode.SIT && aiMode != PetAIMode.WANDER)
             return Language.PET_MODE_FOLLOWING.getComponent();
 
-        // A wandering pet shows its home, a sitting one where it sits
-        final Location loc = aiMode == PetAIMode.WANDER && wanderCenter != null ? wanderCenter : getLocation();
+        final Location loc = getModeLocation();
         if (loc == null)
             return null;
         final Language line = aiMode == PetAIMode.SIT ? Language.PET_MODE_SITTING : Language.PET_MODE_WANDERING;

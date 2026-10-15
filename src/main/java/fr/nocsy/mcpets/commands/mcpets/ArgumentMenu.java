@@ -3,7 +3,6 @@ package fr.nocsy.mcpets.commands.mcpets;
 import fr.nocsy.mcpets.commands.AArgument;
 import fr.nocsy.mcpets.data.Items;
 import fr.nocsy.mcpets.data.Pet;
-import fr.nocsy.mcpets.data.PetAIMode;
 import fr.nocsy.mcpets.data.config.FormatArg;
 import fr.nocsy.mcpets.data.config.GlobalConfig;
 import fr.nocsy.mcpets.data.config.Language;
@@ -83,10 +82,10 @@ public class ArgumentMenu extends AArgument {
         if (pet.hasSkins())
             inventory.setItem(2, Items.SKINS.getItem());
         if (GlobalConfig.getInstance().isNameable())
-            inventory.setItem(3, Items.RENAME.getItem());
+            inventory.setItem(3, Items.rename(pet));
         inventory.setItem(4, pet.buildItem(Items.petInfo(pet), true));
         if (!isMount)
-            inventory.setItem(5, Items.summon(pet.getAiMode() != PetAIMode.FOLLOW));
+            inventory.setItem(5, Items.summon(pet));
 
         // The menu's buttons act on the last pet the player interacted with
         pet.setLastInteractedWith(p);

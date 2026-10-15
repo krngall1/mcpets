@@ -1,0 +1,53 @@
+--- a/src/main/java/fr/nocsy/mcpets/data/Items.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Items.java
+@@ -37,7 +37,6 @@
+     NEXT_PAGE_SELECTOR("next_page_selector");
+ 
+     @Setter
+-    @Getter
+     private ItemStack item;
+ 
+     @Getter
+@@ -131,6 +130,42 @@
+         it.setItemMeta(meta);
+         return it;
+     }
++
++    /**
++     * The button's item. menuIcons.yml sets the item itself (material, model data...),
++     * while the name and lore always come from language.yml so edits there apply
++     */
++    public ItemStack getItem() {
++        final ItemStack it = item.clone();
++        final Language nameKey = switch (name) {
++            case "mount" -> Language.MOUNT_ITEM_NAME;
++            case "rename" -> Language.RENAME_ITEM_NAME;
++            case "petmenu", "mountmenu" -> Language.BACK_TO_PETMENU_ITEM_NAME;
++            case "inventory" -> Language.INVENTORY_ITEM_NAME;
++            case "skins" -> Language.SKINS_ITEM_NAME;
++            case "equipment" -> Language.EQUIPMENT_ITEM_NAME;
++            default -> null;
++        };
++        final Language loreKey = switch (name) {
++            case "mount" -> Language.MOUNT_ITEM_DESCRIPTION;
++            case "rename" -> Language.RENAME_ITEM_DESCRIPTION;
++            case "petmenu", "mountmenu" -> Language.BACK_TO_PETMENU_ITEM_DESCRIPTION;
++            case "inventory" -> Language.INVENTORY_ITEM_DESCRIPTION;
++            case "skins" -> Language.SKINS_ITEM_DESCRIPTION;
++            default -> null;
++        };
++        if (nameKey == null) return it;
++
++        final ItemMeta meta = it.getItemMeta();
++        if (meta == null) return it;
++        meta.displayName(nameKey.getComponent());
++        if (loreKey != null) {
++            final String lore = loreKey.getMessage();
++            meta.lore(lore == null || lore.isEmpty() ? new ArrayList<>() : Utils.toComponents(lore));
++        }
++        it.setItemMeta(meta);
++        return it;
++    }
+ 
+     private void prepareItem() {
+         ItemMeta meta = item.getItemMeta();

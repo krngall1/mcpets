@@ -60,6 +60,14 @@ public interface AbstractModeler {
     boolean isFlyingMount(Pet pet, UUID owner);
 
     /**
+     * Has the pet's model been shown to a player yet? BetterModel starts a model's idle and walk animations
+     * the first time a player sees it, on top of any state played before, so one-shot states wait for this
+     */
+    default boolean isModelShown(UUID petUUID) {
+        return true;
+    }
+
+    /**
      * Register modeler-specific event listeners (ModelMountEvent, ModelDismountEvent, etc.)
      */
     void registerListeners(JavaPlugin plugin);

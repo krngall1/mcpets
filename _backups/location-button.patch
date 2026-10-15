@@ -1,0 +1,178 @@
+diff --git a/src/main/java/fr/nocsy/mcpets/commands/mcpets/ArgumentMenu.java b/src/main/java/fr/nocsy/mcpets/commands/mcpets/ArgumentMenu.java
+index 2fe0e3e..f3bf093 100644
+--- a/src/main/java/fr/nocsy/mcpets/commands/mcpets/ArgumentMenu.java
++++ b/src/main/java/fr/nocsy/mcpets/commands/mcpets/ArgumentMenu.java
+@@ -3,7 +3,6 @@ package fr.nocsy.mcpets.commands.mcpets;
+ import fr.nocsy.mcpets.commands.AArgument;
+ import fr.nocsy.mcpets.data.Items;
+ import fr.nocsy.mcpets.data.Pet;
+-import fr.nocsy.mcpets.data.PetAIMode;
+ import fr.nocsy.mcpets.data.config.FormatArg;
+ import fr.nocsy.mcpets.data.config.GlobalConfig;
+ import fr.nocsy.mcpets.data.config.Language;
+@@ -86,7 +85,7 @@ public class ArgumentMenu extends AArgument {
+             inventory.setItem(3, Items.RENAME.getItem());
+         inventory.setItem(4, pet.buildItem(Items.petInfo(pet), true));
+         if (!isMount)
+-            inventory.setItem(5, Items.summon(pet.getAiMode() != PetAIMode.FOLLOW));
++            inventory.setItem(5, Items.summon(pet));
+ 
+         // The menu's buttons act on the last pet the player interacted with
+         pet.setLastInteractedWith(p);
+diff --git a/src/main/java/fr/nocsy/mcpets/data/Items.java b/src/main/java/fr/nocsy/mcpets/data/Items.java
+index 55eb2e5..7a13f47 100644
+--- a/src/main/java/fr/nocsy/mcpets/data/Items.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Items.java
+@@ -6,6 +6,7 @@ import java.util.ArrayList;
+ import lombok.Getter;
+ import lombok.Setter;
+ 
++import org.bukkit.Location;
+ import org.bukkit.Material;
+ import org.bukkit.entity.Player;
+ import org.bukkit.inventory.ItemStack;
+@@ -87,13 +88,26 @@ public enum Items {
+     public static final String SUMMON_TAG = "MCPetsMenu;summon";
+ 
+     /**
+-     * Summon button of the pet menu, greyed out when the pet is already following
++     * Location button of the pet menu: where the pet is, and for a sitting or wandering pet, click to summon it
+      */
+-    public static ItemStack summon(final boolean active) {
++    public static ItemStack summon(final Pet pet) {
+         final ItemStack it = new ItemStack(Material.BONE);
+         final ItemMeta meta = it.getItemMeta();
+-        meta.displayName((active ? Language.SUMMON_ITEM_NAME : Language.SUMMON_ITEM_NAME_FOLLOWING).getComponent());
+-        meta.lore(Utils.toComponents((active ? Language.SUMMON_ITEM_DESCRIPTION : Language.SUMMON_ITEM_DESCRIPTION_FOLLOWING).getMessage()));
++        meta.displayName(Language.LOCATION_ITEM_NAME.getComponent());
++
++        final List<Component> lore = new ArrayList<>();
++        final Component modeLore = pet.getModeLore();
++        if (modeLore != null)
++            lore.add(modeLore);
++        if (pet.getAiMode() == PetAIMode.SIT || pet.getAiMode() == PetAIMode.WANDER) {
++            final Location loc = pet.getModeLocation();
++            if (loc != null && loc.getWorld() != null)
++                lore.add(Language.LOCATION_ITEM_DIMENSION.getComponentFormatted(
++                        new FormatArg("%dimension%", Utils.getWorldDisplayName(pet.getOwner(), loc.getWorld()))));
++            lore.add(Component.empty());
++            lore.addAll(Utils.toComponents(Language.LOCATION_ITEM_CLICK_TO_SUMMON.getMessage()));
++        }
++        meta.lore(lore);
+         PDCTag.set(meta, SUMMON_TAG);
+         it.setItemMeta(meta);
+         return it;
+@@ -339,16 +353,9 @@ public enum Items {
+         if (!meta.hasLore()) lore = new ArrayList<>();
+         else lore = new ArrayList<>(meta.lore());
+ 
+-        // The mode line goes under the nickname
+-        final Component modeLore = pet.getModeLore();
+         if (pet.getCurrentName() != null && GlobalConfig.getInstance().isNameable()) {
+             lore.add(Component.empty());
+             lore.add(Language.NICKNAME.getComponentFormatted(new FormatArg("%nickname%", pet.getCurrentName())));
+-            if (modeLore != null) lore.add(modeLore);
+-            lore.add(Component.empty());
+-        } else if (modeLore != null) {
+-            lore.add(Component.empty());
+-            lore.add(modeLore);
+             lore.add(Component.empty());
+         }
+ 
+diff --git a/src/main/java/fr/nocsy/mcpets/data/Pet.java b/src/main/java/fr/nocsy/mcpets/data/Pet.java
+index 703c641..6b14fbc 100644
+--- a/src/main/java/fr/nocsy/mcpets/data/Pet.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Pet.java
+@@ -1210,14 +1210,20 @@ public class Pet {
+     }
+ 
+     /**
+-     * The pet's mode for its menu icon, e.g. "Sitting at: x: 10 y: 64 z: -3"
++     * The spot shown for the pet's mode: a wandering pet's home, else where the pet is
++     */
++    public Location getModeLocation() {
++        return aiMode == PetAIMode.WANDER && wanderCenter != null ? wanderCenter : getLocation();
++    }
++
++    /**
++     * The pet's mode for its menu, e.g. "Sitting at: x: 10 y: 64 z: -3"
+      */
+     public Component getModeLore() {
+         if (aiMode != PetAIMode.SIT && aiMode != PetAIMode.WANDER)
+             return Language.PET_MODE_FOLLOWING.getComponent();
+ 
+-        // A wandering pet shows its home, a sitting one where it sits
+-        final Location loc = aiMode == PetAIMode.WANDER && wanderCenter != null ? wanderCenter : getLocation();
++        final Location loc = getModeLocation();
+         if (loc == null)
+             return null;
+         final Language line = aiMode == PetAIMode.SIT ? Language.PET_MODE_SITTING : Language.PET_MODE_WANDERING;
+diff --git a/src/main/java/fr/nocsy/mcpets/data/config/Language.java b/src/main/java/fr/nocsy/mcpets/data/config/Language.java
+index 34e9f2b..92fd5d7 100644
+--- a/src/main/java/fr/nocsy/mcpets/data/config/Language.java
++++ b/src/main/java/fr/nocsy/mcpets/data/config/Language.java
+@@ -24,11 +24,10 @@ public enum Language {
+     BACK_TO_PETMENU_ITEM_NAME("§cBack to menu"),
+     BACK_TO_PETMENU_ITEM_DESCRIPTION("§7Click to get back to the menu"),
+ 
+-    SUMMON_ITEM_NAME("<green>Summon"),
+-    SUMMON_ITEM_DESCRIPTION("<gold>Click to summon pet"),
++    LOCATION_ITEM_NAME("<gold>Location"),
++    LOCATION_ITEM_DIMENSION("In dimension: %dimension%"),
++    LOCATION_ITEM_CLICK_TO_SUMMON("<gray>Click to summon pet to you"),
+     PET_SUMMONED("<green>%pet% was summoned to you!"),
+-    SUMMON_ITEM_NAME_FOLLOWING("<gray>Summon"),
+-    SUMMON_ITEM_DESCRIPTION_FOLLOWING("<yellow>Pet is following you"),
+ 
+     INVENTORY_ITEM_NAME("§6Inventory"),
+     INVENTORY_ITEM_DESCRIPTION("§7Click to open the pet's inventory"),
+diff --git a/src/main/java/fr/nocsy/mcpets/data/inventories/PetInteractionMenu.java b/src/main/java/fr/nocsy/mcpets/data/inventories/PetInteractionMenu.java
+index 8a4e94f..6d59c7c 100644
+--- a/src/main/java/fr/nocsy/mcpets/data/inventories/PetInteractionMenu.java
++++ b/src/main/java/fr/nocsy/mcpets/data/inventories/PetInteractionMenu.java
+@@ -11,7 +11,6 @@ import org.bukkit.inventory.Inventory;
+ 
+ import fr.nocsy.mcpets.data.Pet;
+ import fr.nocsy.mcpets.data.Items;
+-import fr.nocsy.mcpets.data.PetAIMode;
+ import fr.nocsy.mcpets.data.config.Language;
+ import fr.nocsy.mcpets.data.config.GlobalConfig;
+ 
+@@ -39,7 +38,7 @@ public class PetInteractionMenu {
+         if (GlobalConfig.getInstance().isNameable())
+             inventory.setItem(3, Items.RENAME.getItem());
+         // Slot 5 is the summon button, so the mount button moved to slot 8
+-        inventory.setItem(5, Items.summon(pet.getAiMode() != PetAIMode.FOLLOW));
++        inventory.setItem(5, Items.summon(pet));
+         if (GlobalConfig.getInstance().isMountable() && pet.isMountable())
+             inventory.setItem(8, Items.MOUNT.getItem());
+         if (!pet.getSignals().isEmpty() && pet.isEnableSignalStickFromMenu())
+diff --git a/src/main/java/fr/nocsy/mcpets/utils/Utils.java b/src/main/java/fr/nocsy/mcpets/utils/Utils.java
+index 95e5013..5aa328e 100644
+--- a/src/main/java/fr/nocsy/mcpets/utils/Utils.java
++++ b/src/main/java/fr/nocsy/mcpets/utils/Utils.java
+@@ -16,6 +16,7 @@ import com.google.gson.JsonParser;
+ import org.bukkit.Bukkit;
+ import org.bukkit.Location;
+ import org.bukkit.Material;
++import org.bukkit.World;
+ import org.bukkit.event.Event;
+ import org.bukkit.block.Block;
+ import org.bukkit.entity.Player;
+@@ -395,6 +396,16 @@ public class Utils {
+         return PlaceholderAPI.setPlaceholders(p, msg);
+     }
+ 
++    /**
++     * The world's display name: its Multiverse alias through PlaceholderAPI, else its folder name
++     */
++    public static String getWorldDisplayName(final UUID viewer, final World world) {
++        final String alias = applyPlaceholders(viewer, "%multiverse-core_alias_\"" + world.getName() + "\"%");
++        if (alias == null || alias.isBlank() || alias.contains("%multiverse-core_alias_"))
++            return world.getName();
++        return alias;
++    }
++
+     public static Skill getSkill(final String skillName) {
+         final Optional<Skill> optionalSkill = MCPets.getMythicMobs().getSkillManager().getSkill(skillName);
+         return optionalSkill.orElse(null);

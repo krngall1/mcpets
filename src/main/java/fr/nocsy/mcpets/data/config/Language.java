@@ -24,11 +24,10 @@ public enum Language {
     BACK_TO_PETMENU_ITEM_NAME("§cBack to menu"),
     BACK_TO_PETMENU_ITEM_DESCRIPTION("§7Click to get back to the menu"),
 
-    SUMMON_ITEM_NAME("<green>Summon"),
-    SUMMON_ITEM_DESCRIPTION("<gold>Click to summon pet"),
+    LOCATION_ITEM_NAME("<gold>Location"),
+    LOCATION_ITEM_DIMENSION("In dimension: %dimension%"),
+    LOCATION_ITEM_CLICK_TO_SUMMON("<gray>Click to summon pet to you"),
     PET_SUMMONED("<green>%pet% was summoned to you!"),
-    SUMMON_ITEM_NAME_FOLLOWING("<gray>Summon"),
-    SUMMON_ITEM_DESCRIPTION_FOLLOWING("<yellow>Pet is following you"),
 
     INVENTORY_ITEM_NAME("§6Inventory"),
     INVENTORY_ITEM_DESCRIPTION("§7Click to open the pet's inventory"),

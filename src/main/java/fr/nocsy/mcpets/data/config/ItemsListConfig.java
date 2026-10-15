@@ -48,6 +48,8 @@ public class ItemsListConfig extends AbstractConfig {
             getConfig().set("skins", Items.SKINS.getItem());
         if (getConfig().get("equipment") == null)
             getConfig().set("equipment", Items.EQUIPMENT.getItem());
+        if (getConfig().get("location") == null)
+            getConfig().set("location", Items.LOCATION.getItem());
         if (getConfig().get("previous_page_selector") == null)
             getConfig().set("previous_page_selector", Items.PREVIOUS_PAGE_SELECTOR.getItem());
         if (getConfig().get("next_page_selector") == null)

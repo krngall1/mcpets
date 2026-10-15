@@ -1,0 +1,74 @@
+--- a/src/main/java/fr/nocsy/mcpets/data/Items.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Items.java
+@@ -85,6 +85,25 @@
+         prepareItem();
+     }
+ 
++    /**
++     * Rename button of the pet menu: the pet's nickname if it has one, then the rename description
++     */
++    public static ItemStack rename(final Pet pet) {
++        final ItemStack it = RENAME.getItem().clone();
++        final ItemMeta meta = it.getItemMeta();
++
++        final List<Component> lore = new ArrayList<>();
++        if (pet.getCurrentName() != null) {
++            lore.add(Language.NICKNAME.getComponentFormatted(new FormatArg("%nickname%", pet.getCurrentName())));
++            lore.add(Component.empty());
++        }
++        lore.addAll(Utils.toComponents(Language.RENAME_ITEM_DESCRIPTION.getMessage()));
++
++        meta.lore(lore);
++        it.setItemMeta(meta);
++        return it;
++    }
++
+     public static final String SUMMON_TAG = "MCPetsMenu;summon";
+ 
+     /**
+@@ -353,12 +372,6 @@
+         if (!meta.hasLore()) lore = new ArrayList<>();
+         else lore = new ArrayList<>(meta.lore());
+ 
+-        if (pet.getCurrentName() != null && GlobalConfig.getInstance().isNameable()) {
+-            lore.add(Component.empty());
+-            lore.add(Language.NICKNAME.getComponentFormatted(new FormatArg("%nickname%", pet.getCurrentName())));
+-            lore.add(Component.empty());
+-        }
+-
+         lore.addAll(Utils.toComponents(Language.NICKNAME_ITEM_LORE.getMessage()));
+ 
+         meta.lore(lore);
+--- a/src/main/java/fr/nocsy/mcpets/data/inventories/PetInteractionMenu.java
++++ b/src/main/java/fr/nocsy/mcpets/data/inventories/PetInteractionMenu.java
+@@ -36,7 +36,7 @@
+         if (pet.hasSkins())
+             inventory.setItem(2, Items.SKINS.getItem());
+         if (GlobalConfig.getInstance().isNameable())
+-            inventory.setItem(3, Items.RENAME.getItem());
++            inventory.setItem(3, Items.rename(pet));
+         // Slot 5 is the summon button, so the mount button moved to slot 8
+         inventory.setItem(5, Items.summon(pet));
+         if (GlobalConfig.getInstance().isMountable() && pet.isMountable())
+--- a/src/main/java/fr/nocsy/mcpets/data/inventories/MountInteractionMenu.java
++++ b/src/main/java/fr/nocsy/mcpets/data/inventories/MountInteractionMenu.java
+@@ -37,7 +37,7 @@
+         if (pet.hasSkins())
+             inventory.setItem(2, Items.SKINS.getItem());
+         if (GlobalConfig.getInstance().isNameable())
+-            inventory.setItem(3, Items.RENAME.getItem());
++            inventory.setItem(3, Items.rename(pet));
+         if (GlobalConfig.getInstance().isMountable() && pet.isMountable())
+             inventory.setItem(5, Items.MOUNT.getItem());
+         if (!pet.getSignals().isEmpty() && pet.isEnableSignalStickFromMenu())
+--- a/src/main/java/fr/nocsy/mcpets/commands/mcpets/ArgumentMenu.java
++++ b/src/main/java/fr/nocsy/mcpets/commands/mcpets/ArgumentMenu.java
+@@ -82,7 +82,7 @@
+         if (pet.hasSkins())
+             inventory.setItem(2, Items.SKINS.getItem());
+         if (GlobalConfig.getInstance().isNameable())
+-            inventory.setItem(3, Items.RENAME.getItem());
++            inventory.setItem(3, Items.rename(pet));
+         inventory.setItem(4, pet.buildItem(Items.petInfo(pet), true));
+         if (!isMount)
+             inventory.setItem(5, Items.summon(pet));

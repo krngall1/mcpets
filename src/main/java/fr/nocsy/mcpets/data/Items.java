@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import lombok.Getter;
 import lombok.Setter;
 
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -32,11 +33,11 @@ public enum Items {
     INVENTORY("inventory"),
     SKINS("skins"),
     EQUIPMENT("equipment"),
+    LOCATION("location"),
     PREVIOUS_PAGE_SELECTOR("previous_page_selector"),
     NEXT_PAGE_SELECTOR("next_page_selector");
 
     @Setter
-    @Getter
     private ItemStack item;
 
     @Getter
@@ -72,6 +73,9 @@ public enum Items {
             case "equipment":
                 item = equipment();
                 break;
+            case "location":
+                item = new ItemStack(Material.BONE);
+                break;
             case "page_selector":
             case "previous_page_selector":
             case "next_page_selector":
@@ -84,17 +88,86 @@ public enum Items {
         prepareItem();
     }
 
+    /**
+     * Rename button of the pet menu: the pet's nickname if it has one, then the rename description
+     */
+    public static ItemStack rename(final Pet pet) {
+        final ItemStack it = RENAME.getItem().clone();
+        final ItemMeta meta = it.getItemMeta();
+
+        final List<Component> lore = new ArrayList<>();
+        if (pet.getCurrentName() != null) {
+            lore.add(Language.NICKNAME.getComponentFormatted(new FormatArg("%nickname%", pet.getCurrentName())));
+            lore.add(Component.empty());
+        }
+        lore.addAll(Utils.toComponents(Language.RENAME_ITEM_DESCRIPTION.getMessage()));
+
+        meta.lore(lore);
+        it.setItemMeta(meta);
+        return it;
+    }
+
     public static final String SUMMON_TAG = "MCPetsMenu;summon";
 
     /**
-     * Summon button of the pet menu, greyed out when the pet is already following
+     * Location button of the pet menu: where the pet is, and for a sitting or wandering pet, click to summon it
      */
-    public static ItemStack summon(final boolean active) {
-        final ItemStack it = new ItemStack(Material.BONE);
+    public static ItemStack summon(final Pet pet) {
+        // The item itself comes from the "location" entry of menuIcons.yml
+        final ItemStack it = LOCATION.item.clone();
         final ItemMeta meta = it.getItemMeta();
-        meta.displayName((active ? Language.SUMMON_ITEM_NAME : Language.SUMMON_ITEM_NAME_FOLLOWING).getComponent());
-        meta.lore(Utils.toComponents((active ? Language.SUMMON_ITEM_DESCRIPTION : Language.SUMMON_ITEM_DESCRIPTION_FOLLOWING).getMessage()));
+        meta.displayName(Language.LOCATION_ITEM_NAME.getComponent());
+
+        final List<Component> lore = new ArrayList<>();
+        final Component modeLore = pet.getModeLore();
+        if (modeLore != null)
+            lore.add(modeLore);
+        if (pet.getAiMode() == PetAIMode.SIT || pet.getAiMode() == PetAIMode.WANDER) {
+            final Location loc = pet.getModeLocation();
+            if (loc != null && loc.getWorld() != null)
+                lore.add(Language.LOCATION_ITEM_DIMENSION.getComponentFormatted(
+                        new FormatArg("%dimension%", Utils.getWorldDisplayName(pet.getOwner(), loc.getWorld()))));
+            lore.add(Component.empty());
+            lore.addAll(Utils.toComponents(Language.LOCATION_ITEM_CLICK_TO_SUMMON.getMessage()));
+        }
+        meta.lore(lore);
         PDCTag.set(meta, SUMMON_TAG);
+        it.setItemMeta(meta);
+        return it;
+    }
+
+    /**
+     * The button's item. menuIcons.yml sets the item itself (material, model data...),
+     * while the name and lore always come from language.yml so edits there apply
+     */
+    public ItemStack getItem() {
+        final ItemStack it = item.clone();
+        final Language nameKey = switch (name) {
+            case "mount" -> Language.MOUNT_ITEM_NAME;
+            case "rename" -> Language.RENAME_ITEM_NAME;
+            case "petmenu", "mountmenu" -> Language.BACK_TO_PETMENU_ITEM_NAME;
+            case "inventory" -> Language.INVENTORY_ITEM_NAME;
+            case "skins" -> Language.SKINS_ITEM_NAME;
+            case "equipment" -> Language.EQUIPMENT_ITEM_NAME;
+            default -> null;
+        };
+        final Language loreKey = switch (name) {
+            case "mount" -> Language.MOUNT_ITEM_DESCRIPTION;
+            case "rename" -> Language.RENAME_ITEM_DESCRIPTION;
+            case "petmenu", "mountmenu" -> Language.BACK_TO_PETMENU_ITEM_DESCRIPTION;
+            case "inventory" -> Language.INVENTORY_ITEM_DESCRIPTION;
+            case "skins" -> Language.SKINS_ITEM_DESCRIPTION;
+            default -> null;
+        };
+        if (nameKey == null) return it;
+
+        final ItemMeta meta = it.getItemMeta();
+        if (meta == null) return it;
+        meta.displayName(nameKey.getComponent());
+        if (loreKey != null) {
+            final String lore = loreKey.getMessage();
+            meta.lore(lore == null || lore.isEmpty() ? new ArrayList<>() : Utils.toComponents(lore));
+        }
         it.setItemMeta(meta);
         return it;
     }
@@ -338,19 +411,6 @@ public enum Items {
         List<Component> lore;
         if (!meta.hasLore()) lore = new ArrayList<>();
         else lore = new ArrayList<>(meta.lore());
-
-        // The mode line goes under the nickname
-        final Component modeLore = pet.getModeLore();
-        if (pet.getCurrentName() != null && GlobalConfig.getInstance().isNameable()) {
-            lore.add(Component.empty());
-            lore.add(Language.NICKNAME.getComponentFormatted(new FormatArg("%nickname%", pet.getCurrentName())));
-            if (modeLore != null) lore.add(modeLore);
-            lore.add(Component.empty());
-        } else if (modeLore != null) {
-            lore.add(Component.empty());
-            lore.add(modeLore);
-            lore.add(Component.empty());
-        }
 
         lore.addAll(Utils.toComponents(Language.NICKNAME_ITEM_LORE.getMessage()));
 

@@ -1,0 +1,41 @@
+--- a/src/main/java/fr/nocsy/mcpets/data/Items.java
++++ b/src/main/java/fr/nocsy/mcpets/data/Items.java
+@@ -33,6 +33,7 @@
+     INVENTORY("inventory"),
+     SKINS("skins"),
+     EQUIPMENT("equipment"),
++    LOCATION("location"),
+     PREVIOUS_PAGE_SELECTOR("previous_page_selector"),
+     NEXT_PAGE_SELECTOR("next_page_selector");
+ 
+@@ -72,6 +73,9 @@
+             case "equipment":
+                 item = equipment();
+                 break;
++            case "location":
++                item = new ItemStack(Material.BONE);
++                break;
+             case "page_selector":
+             case "previous_page_selector":
+             case "next_page_selector":
+@@ -109,7 +113,8 @@
+      * Location button of the pet menu: where the pet is, and for a sitting or wandering pet, click to summon it
+      */
+     public static ItemStack summon(final Pet pet) {
+-        final ItemStack it = new ItemStack(Material.BONE);
++        // The item itself comes from the "location" entry of menuIcons.yml
++        final ItemStack it = LOCATION.item.clone();
+         final ItemMeta meta = it.getItemMeta();
+         meta.displayName(Language.LOCATION_ITEM_NAME.getComponent());
+ 
+--- a/src/main/java/fr/nocsy/mcpets/data/config/ItemsListConfig.java
++++ b/src/main/java/fr/nocsy/mcpets/data/config/ItemsListConfig.java
+@@ -48,6 +48,8 @@
+             getConfig().set("skins", Items.SKINS.getItem());
+         if (getConfig().get("equipment") == null)
+             getConfig().set("equipment", Items.EQUIPMENT.getItem());
++        if (getConfig().get("location") == null)
++            getConfig().set("location", Items.LOCATION.getItem());
+         if (getConfig().get("previous_page_selector") == null)
+             getConfig().set("previous_page_selector", Items.PREVIOUS_PAGE_SELECTOR.getItem());
+         if (getConfig().get("next_page_selector") == null)

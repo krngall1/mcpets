@@ -130,6 +130,20 @@ public class BetterModelModeler implements AbstractModeler {
     }
 
     @Override
+    public boolean isModelShown(UUID petUUID) {
+        EntityTrackerRegistry registry = BetterModel.registryOrNull(petUUID);
+        if (registry == null)
+            return false;
+        // A tracker's scheduler runs from the first time a player sees it (built-in animations played)
+        // until nobody sees it anymore
+        for (EntityTracker tracker : registry.trackers()) {
+            if (tracker.isScheduled())
+                return true;
+        }
+        return false;
+    }
+
+    @Override
     public AbstractNameTag getNameTag(UUID petUUID) {
         EntityTrackerRegistry registry = BetterModel.registryOrNull(petUUID);
         if (registry == null)

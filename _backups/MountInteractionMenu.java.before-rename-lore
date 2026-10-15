@@ -1,0 +1,54 @@
+package fr.nocsy.mcpets.data.inventories;
+
+import fr.nocsy.mcpets.data.Items;
+import fr.nocsy.mcpets.data.Pet;
+import fr.nocsy.mcpets.data.config.GlobalConfig;
+import fr.nocsy.mcpets.data.config.Language;
+import lombok.Getter;
+import org.bukkit.entity.Player;
+import org.bukkit.inventory.Inventory;
+
+import java.util.UUID;
+
+/**
+ * Menu to interact with a mount (rename, skin, mount, inventory)
+ */
+public class MountInteractionMenu {
+
+    @Getter
+    private static final String title = Language.INVENTORY_MOUNTS_MENU_INTERACTIONS.getMessage();
+
+    private static final PetInventoryHolder.Type petInvType = PetInventoryHolder.Type.MOUNT_INTERACTION_MENU;
+
+    @Getter
+    private final Inventory inventory;
+
+    public MountInteractionMenu(final Pet pet, final UUID owner) {
+        // If the taming is incomplete then there is no mount menu available
+        if (pet.getTamingProgress() < 1) {
+            inventory = null;
+            return;
+        }
+        pet.setOwner(owner);
+        inventory = new PetInventoryHolder(9, title, petInvType).getInventory();
+
+        if (GlobalConfig.getInstance().isActivateBackMenuIcon())
+            inventory.setItem(0, Items.MOUNTMENU.getItem());
+        if (pet.hasSkins())
+            inventory.setItem(2, Items.SKINS.getItem());
+        if (GlobalConfig.getInstance().isNameable())
+            inventory.setItem(3, Items.RENAME.getItem());
+        if (GlobalConfig.getInstance().isMountable() && pet.isMountable())
+            inventory.setItem(5, Items.MOUNT.getItem());
+        if (!pet.getSignals().isEmpty() && pet.isEnableSignalStickFromMenu())
+            inventory.setItem(6, pet.getSignalStick());
+        if (pet.getInventorySize() > 0)
+            inventory.setItem(7, Items.INVENTORY.getItem());
+        inventory.setItem(4, pet.buildItem(Items.petInfo(pet), true));
+    }
+
+    public void open(final Player p) {
+        if (inventory != null)
+            p.openInventory(inventory);
+    }
+}

@@ -16,6 +16,7 @@ import com.google.gson.JsonParser;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
 import org.bukkit.event.Event;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
@@ -393,6 +394,16 @@ public class Utils {
             return PlaceholderAPI.setPlaceholders(Bukkit.getOfflinePlayer(uuid), msg);
         }
         return PlaceholderAPI.setPlaceholders(p, msg);
+    }
+
+    /**
+     * The world's display name: its Multiverse alias through PlaceholderAPI, else its folder name
+     */
+    public static String getWorldDisplayName(final UUID viewer, final World world) {
+        final String alias = applyPlaceholders(viewer, "%multiverse-core_alias_\"" + world.getName() + "\"%");
+        if (alias == null || alias.isBlank() || alias.contains("%multiverse-core_alias_"))
+            return world.getName();
+        return alias;
     }
 
     public static Skill getSkill(final String skillName) {

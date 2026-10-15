@@ -37,7 +37,7 @@ public class MountInteractionMenu {
         if (pet.hasSkins())
             inventory.setItem(2, Items.SKINS.getItem());
         if (GlobalConfig.getInstance().isNameable())
-            inventory.setItem(3, Items.RENAME.getItem());
+            inventory.setItem(3, Items.rename(pet));
         if (GlobalConfig.getInstance().isMountable() && pet.isMountable())
             inventory.setItem(5, Items.MOUNT.getItem());
         if (!pet.getSignals().isEmpty() && pet.isEnableSignalStickFromMenu())
