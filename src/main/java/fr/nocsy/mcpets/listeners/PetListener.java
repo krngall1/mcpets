@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 
+import fr.nocsy.mcpets.mythicmobs.mechanics.PetReloadMechanic;
 import fr.nocsy.mcpets.data.*;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
@@ -227,8 +228,11 @@ public class PetListener implements Listener {
             }
 
             // Sitting and wandering pets first, so they count towards the limits of the pets spawned below
-            if (p.isOnline())
+            if (p.isOnline()) {
                 PlacedPets.restore(p);
+                // Pet entities that loaded while the owner was away and that placed-pets.yml doesn't know about
+                PetReloadMechanic.relinkWaiting(p);
+            }
 
             if (GlobalConfig.getInstance().isVelocityEnabled()
                     && GlobalConfig.getInstance().isDatabaseSupport()) {
